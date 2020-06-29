@@ -24,13 +24,13 @@
 """
 
 import time, os, datetime, sys, json, logging
-import claves
+import config
 import paho.mqtt.client as mqtt
 
 # Definimos una constante con las cadenas para preguntar por MQTT de manera que el códgio sea más legible
 Preguntas = {
-    "Bateria": "R/{}/system/0/Dc/Battery/Soc".format(claves.VictronInterna),
-    "Consumo": "R/{}/system/0/Ac/Consumption/L1/Power".format(claves.VictronInterna),
+    "Bateria": "R/{}/system/0/Dc/Battery/Soc".format(config.VictronInterna),
+    "Consumo": "R/{}/system/0/Ac/Consumption/L1/Power".format(config.VictronInterna),
     "Carga": "cmnd/CargaCoche/Mem1",
     "SOCMinimo": "cmnd/CargaCoche/Mem2",
     "CargaRed": "cmnd/CargaCoche/Mem3",
@@ -41,7 +41,7 @@ Preguntas = {
 class AccesoMQTT:
     """ Para acceder al Venus GX a través de MQTT de cara a gestionar la recarga del coche del sistema FV
     """
-
+    
     def __init__(self, debug=False):
         self.debug = debug
         # Creo el cliente
@@ -196,6 +196,7 @@ class AccesoMQTT:
         """ Controla el estado de la batería y del relé y activa o desactiva 
 			en función de la hora y el % de SOC
 		"""
+        global tiempo, conectado
         # Obtenemos los datos de estado de la batería y consumo
         self.pregunta()
         self.pregunta("Consumo")
@@ -208,9 +209,11 @@ class AccesoMQTT:
             self.client.publish("cmnd/CargaCoche/backlog", "Power1 Off;Power2 Off")
             self.client.publish("cmnd/CargaCoche/Mem1", 0)
             logging.info('No hay consumo, por lo que el coche ya está cargado o no conectado. Desconectamos')
-            os.system(
-                'echo Desconectamos el relé por falta de consumo |mutt -s "No hay consumo {} y batería al {}%  Hector.D.Rguez@gmail.com'.format(self.consumo, self.bateria)
-            )
+            #os.system(
+            #    'echo Desconectamos el relé por falta de consumo |mutt -s "No hay consumo {} y batería al {}%  Hector.D.Rguez@gmail.com'.format(self.consumo, self.bateria)
+            #)
+            # Sumamos el tiempo que ha estado cargando
+            tiempo = tiempo + (conectado - datetime.datetime.now()).minutes
             return
         # Si está activo el relé, la batería está por debajo del 50% y son entre las 8 y las 20
         if self.rele1 and self.bateria <= self.SOCMinimo and hora > 8 and hora < 20:
@@ -223,15 +226,18 @@ class AccesoMQTT:
             logging.info("Desconectamos el coche al {}%".format(self.bateria))
             # Enviamos un mail comunicando el apagado si no lo hemos enviado antes
             if not hora == self.hora:
-                os.system(
-                    'echo Desconectamos el coche |mutt -s "La batería está al {}%" Hector.D.Rguez@gmail.com'.format(self.bateria)
-                )
+                #os.system(
+                #    'echo Desconectamos el coche |mutt -s "La batería está al {}%" Hector.D.Rguez@gmail.com'.format(self.bateria)
+                #)
                 self.hora = hora
                 mensaje = "y mandamos correo"
             logging.info("Batería al {}%, desconectamos {}".format(self.bateria, mensaje))
+            # Sumamos el tiempo que ha estado cargando
+            tiempo = tiempo + (conectado - datetime.datetime.now()).minutes
         # Si no está activo el relé y tenemos más del SOC Mínimo + un 15% adicional de batería,
         if (
-            not self.rele1
+            self.carga
+            and not self.rele1
             and self.bateria > self.SOCMinimo + 15
             and hora > 8
             and hora < 20
@@ -239,15 +245,21 @@ class AccesoMQTT:
             # Volvemos a conectarlo
             self.enciende()
             if not hora == self.hora:
-                os.system(
-                    'echo Conectamos el coche |mutt -s "La batería está al {}%" Hector.D.Rguez@gmail.com'.format(self.bateria)
-                )
+                #os.system(
+                #    'echo Conectamos el coche |mutt -s "La batería está al {}%" Hector.D.Rguez@gmail.com'.format(self.bateria)
+                #)
                 self.hora = hora
                 mensaje = "y mandamos correo"
             logging.info("Batería al {}%, conectamos {}".format(self.bateria, mensaje))
+            # Guardamos el momento en el que conectamos para obtener el tiempo toal al día
+            conectado = datetime.datetime.now()
         # Si estamos cargando, mostramos el consumo
         if self.rele1:
             print("Consumo: {}W".format(self.consumo))
+        # Si ya es por la noche mostramos el total de tiempo conectado durante el día y reiniciamos contador
+        if hora > 21:
+            loggin.info('Ha estado activa la carga durante {} minutos'.format(tiempo))
+            tiempo = 0
 
 
 if __name__ == "__main__":
@@ -258,14 +270,17 @@ if __name__ == "__main__":
         debug = False
         nivel = logging.INFO
     # Inicializamos el logging
-    logging.basicConfig(
-        handlers=[logging.FileHandler("/tmp/Bateria.log"), logging.StreamHandler()],
+        logging.basicConfig(
         format="%(asctime)s %(message)s",
         datefmt="%d/%m/%Y %H:%M:%S",
         level=nivel,
     )
+    logging.info("Arrancamos el Control de Carga")
     # Inicializamos el objeto para acceder al MQTT
     victron = AccesoMQTT(debug)
+    # Tiempo de carga cada día
+    tiempo = 0
+    conectado = datetime.datetime.now()
     # Nos quedamos en bucle eterno controlando cada 2 minutos
     while True:
         victron.controla()
