@@ -14,13 +14,22 @@
     Botón 0: code 0401 enciende, 0400 apaga
     Botón 1: code 0402 enciende, 0403 apaga
     Todos los detecta como Button1 multi-press 1
-    
+    Configuramos una regla en el SonOff para que cambie el comportamiento de los botones y que reinicie las
+    variables, carga de fotovoltaica Mem1 a 1 y carga de red Mem3 a 0 a las 8 AM:
+    *** Parece ser que los botones en pines activan directamente los relés, aunque le programemos una rule.
+        El button0 se corresponde realmente con el 2 en la programación, y el 1 con el uno. La diferencia
+        es que el botón normal, que también es el uno, si que solo hace lo definido en la rule. A la espera
+        de ver si podemos cablear directamente el botón normal, pasamos a programar en la rule la desconexión
+        de los relés.
+    ***
+    rule1 on button1#state do backlog mem1 1;power1 off endon on button2#state do backlog mem3 1;power2 off endon on time#Minute=480 do backlog mem1 1; mem3 0 endon
     Para que no haya problemas con las actualizaciones de las imágenes, tenemos que instalar las librerías
     en nuestro home, para ello creamos una carpeta lib en /home/root y en ella instalamos el Paho-MQTT y
     definimos un .bashrc donde hacemos un 
     export PYTHONPATH=/home/root/lib/
     Y como por alguna extraña razón se empeña en arrancar en sh en vez de bash, creamos un .profile que
     arranca el bash.
+    
 """
 
 import time, os, datetime, sys, json, logging
@@ -203,18 +212,6 @@ class AccesoMQTT:
         # Nos quedamos con la hora para no saturar de mensajes en la misma hora
         hora = datetime.datetime.now().hour
         mensaje = ""
-		# Si está activo algún relé, es decir, estamos supuestamente cargando el coche, 
-		# pero el consumo no lo refleja, desconectamos el relé y desactivamos la carga
-        if (self.rele1 or self.rele2) and self.consumo < 2000:
-            self.client.publish("cmnd/CargaCoche/backlog", "Power1 Off;Power2 Off")
-            self.client.publish("cmnd/CargaCoche/Mem1", 0)
-            logging.info('No hay consumo, por lo que el coche ya está cargado o no conectado. Desconectamos')
-            #os.system(
-            #    'echo Desconectamos el relé por falta de consumo |mutt -s "No hay consumo {} y batería al {}%  Hector.D.Rguez@gmail.com'.format(self.consumo, self.bateria)
-            #)
-            # Sumamos el tiempo que ha estado cargando
-            tiempo = tiempo + (conectado - datetime.datetime.now()).minutes
-            return
         # Si está activo el relé, la batería está por debajo del 50% y son entre las 8 y las 20
         if self.rele1 and self.bateria <= self.SOCMinimo and hora > 8 and hora < 20:
             # Deberíamos de cortar la carga o pasar a la red, dependiendo de
@@ -251,15 +248,42 @@ class AccesoMQTT:
                 self.hora = hora
                 mensaje = "y mandamos correo"
             logging.info("Batería al {}%, conectamos {}".format(self.bateria, mensaje))
-            # Guardamos el momento en el que conectamos para obtener el tiempo toal al día
+            # Guardamos el momento en el que conectamos para obtener el tiempo total al día
             conectado = datetime.datetime.now()
-        # Si estamos cargando, mostramos el consumo
+        # Si estamos cargando de la FV, mostramos el consumo
         if self.rele1:
             print("Consumo: {}W".format(self.consumo))
         # Si ya es por la noche mostramos el total de tiempo conectado durante el día y reiniciamos contador
-        if hora > 21:
-            loggin.info('Ha estado activa la carga durante {} minutos'.format(tiempo))
+        if hora == 21 and tiempo > 0:
+            loggin.info(
+                'Ha estado activa la carga durante {} minutos y {} segundos'.format(tiempo/60, tiempo%60)
+            )
             tiempo = 0
+        # Si tenemos programada carga nocturna, no está activo el rele2 y son la 1
+        if not self.rele2 and self.cargaRed and hora == 23:
+            # Encendemos el segundo relé
+            self.enciende(False)
+            # Ponemos carga a 1 si no lo está
+            if not self.carga:
+                self.client.publish("cmnd/CargaCoche/Mem1", 1)
+            return
+		# Si está activo algún relé, es decir, estamos supuestamente cargando el coche, 
+		# pero el consumo no lo refleja, desconectamos el relé y desactivamos la carga
+        if (self.rele1 or self.rele2) and self.consumo < 2000:
+            # Por si está negociando el coche esperamos un poco
+            self.pregunta("Consumo")
+            time.sleep(10)
+            if self.consumo > 2000:
+                return
+            self.client.publish("cmnd/CargaCoche/backlog", "Power1 Off;Power2 Off")
+            self.client.publish("cmnd/CargaCoche/Mem1", 0)
+            logging.info('No hay consumo, por lo que el coche ya está cargado o no conectado. Desconectamos')
+            #os.system(
+            #    'echo Desconectamos el relé por falta de consumo |mutt -s "No hay consumo {} y batería al {}%  Hector.D.Rguez@gmail.com'.format(self.consumo, self.bateria)
+            #)
+            # Sumamos el tiempo que ha estado cargando
+            tiempo = tiempo + (conectado - datetime.datetime.now()).seconds
+            return
 
 
 if __name__ == "__main__":
