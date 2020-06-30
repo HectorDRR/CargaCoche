@@ -267,9 +267,10 @@ class AccesoMQTT:
             if not self.carga:
                 self.client.publish("cmnd/CargaCoche/Mem1", 1)
             return
-		# Si está activo algún relé, es decir, estamos supuestamente cargando el coche, 
+		# Si está activo el relé1, es decir, estamos supuestamente cargando el coche, 
 		# pero el consumo no lo refleja, desconectamos el relé y desactivamos la carga
-        if (self.rele1 or self.rele2) and self.consumo < 2000:
+        # No lo podemos hacer con el rele2 puesto que no podemos medir el consumo de la calle
+        if self.rele1 and self.consumo < 2000:
             # Por si está negociando el coche esperamos un poco
             self.pregunta("Consumo")
             time.sleep(10)
