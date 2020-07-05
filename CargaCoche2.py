@@ -85,6 +85,7 @@ class AccesoMQTT:
         self.SOCMinimo = 50
         self.cargaRed = False
         self.consumo = 0
+        self.flag = False
         # Obtenemos valores
         for f in Preguntas:
             self.pregunta(f)
@@ -150,6 +151,7 @@ class AccesoMQTT:
         # Asignamos la carga
         if "Mem1" in self.mensaje and self.mensaje["Mem1"] == "1":
             self.carga = True
+            self.flag = False
 		# Asignamos la consigna de SOC Mínimo
         if "Mem2" in self.mensaje:
             self.SOCMinimo = int(self.mensaje["Mem2"])
@@ -159,28 +161,19 @@ class AccesoMQTT:
         if "POWER1" in self.mensaje:
             if self.mensaje["POWER1"] == "ON":
                 self.rele1 = True
-                # Activamos carga
-                self.client.publish("cmnd/CargaCoche/Mem1", 1)
+                self.flag = False
             else:
                 self.rele1 = False
         if "POWER2" in self.mensaje:
             if self.mensaje["POWER2"] == "ON":
                 self.rele2 = True
-                # Activamos Mem3 para que se produzca la carga nocturna de la red
-                self.client.publish("cmnd/CargaCoche/Mem3", 1)
+                self.flag = False
             else:
                 self.rele2 = False
-        if self.debug:
-            print(
-                "SOC Mínimo {}%, Relé1 = {}, Relé2 = {}, {}".format(self.SOCMinimo, self.rele1, self.rele2, self.mensaje)
-            )
-        # Mostramos el estado del SonOff. Si ponemos el SOCMinimo a 10 continuará cargando indefinidamente
+       # Mostramos el estado del SonOff. Si ponemos el SOCMinimo a 10 continuará cargando indefinidamente
         logging.info(
-            "SOC Mínimo {}%, Relé1 = {}, Relé2 = {}, {}".format(self.SOCMinimo, self.rele1, self.rele2, self.mensaje)
+            "SOC Mínimo {}%, Relé1 = {}, Relé2 = {}, carga = {}, flag = {}, {}".format(self.SOCMinimo, self.rele1, self.rele2, self.carga, self.flag, self.mensaje)
         )
-        # Lo mandamos a un fichero en el tmp para que podamos ver el estado en el st
-        with open('/tmp/Coche', 'w') as file:
-            file.writelines(str(self.rele1) + str(self.rele2))
 
     def pregunta(self, que="Bateria"):
         """ Manda la petición por MQTT, por defecto, del estado de la batería
@@ -206,16 +199,52 @@ class AccesoMQTT:
 			en función de la hora y el % de SOC
 		"""
         global tiempo, conectado
+        # Si tenemos programada carga nocturna, no está activo el rele2 y son la 1
+        if not self.rele2 and self.cargaRed and hora == config.InicioRed:
+            # Encendemos el segundo relé
+            self.enciende(False)
+            # Salimos, ya que a las 8 tenemos la regla programada en el Sonoff para que ponga CargaRed a 0
+            # Aunque eso no desconectará el Relé2. Desactivamos la carga para que no siga procesando después
+            # del siguiente if
+            self.client.publish("cmnd/CargaCoche/Mem1", 0)
+            return
+        # Si no hemos activado el flag de carga o se ha desactivado por falta de consumo, lo avismos una sola vez y salimos
+        if not self.carga:
+            if not self.flag:
+                logging.info('El flag de carga no está activado')
+                self.flag = True
+            return
         # Obtenemos los datos de estado de la batería y consumo
         self.pregunta()
         self.pregunta("Consumo")
         # Nos quedamos con la hora para no saturar de mensajes en la misma hora
         hora = datetime.datetime.now().hour
         mensaje = ""
+   	    # Si está activo el relé1, es decir, estamos supuestamente cargando el coche, 
+        # pero el consumo no lo refleja, desconectamos el relé y desactivamos la carga
+        # No lo podemos hacer con el rele2 puesto que no podemos medir el consumo de la calle
+        if self.rele1 and self.consumo < 2000:
+            # Por si está negociando el coche esperamos un poco
+            self.pregunta("Consumo")
+            time.sleep(10)
+            if self.consumo > 2000:
+                return
+            # Apagamos relé y quitamos carga
+            self.client.publish("cmnd/CargaCoche/backlog", "Power1 0;Mem1 0")
+            logging.info('No hay consumo, por lo que el coche ya está cargado o no conectado. Desconectamos')
+            #os.system(
+            #    'echo Desconectamos el relé por falta de consumo |mutt -s "No hay consumo {} y batería al {}%  Hector.D.Rguez@gmail.com'.format(self.consumo, self.bateria)
+            #)
+            # Sumamos el tiempo que ha estado cargando y lo mostramos
+            tiempo = tiempo + (conectado - datetime.datetime.now()).seconds
+            logging.info("Tiempo conectado {} segundos".format((conectado - datetime.datetime.now()).seconds))
+            # Activamos el flag para no seguir procesando
+            self.flag = True
+            return
         # Si está activo el relé, la batería está por debajo del 50% y son entre las 8 y las 20
-        if self.rele1 and self.bateria <= self.SOCMinimo and hora > 8 and hora < 20:
+        if self.rele1 and self.bateria <= self.SOCMinimo and hora > config.Inicio and hora < config.Final:
             # Deberíamos de cortar la carga o pasar a la red, dependiendo de
-            # 	lo que hayamos pedido
+            # lo que hayamos pedido
             # Esto lo controlaremos más adelante usando los dos botones que
             # 	nos ofrece el SonOff Dual para ponerlos externos, seguramente
             # 	en la carcasa del cuadro. Por ahora, solo cargamos de la FV
@@ -230,14 +259,14 @@ class AccesoMQTT:
                 mensaje = "y mandamos correo"
             logging.info("Batería al {}%, desconectamos {}".format(self.bateria, mensaje))
             # Sumamos el tiempo que ha estado cargando
-            tiempo = tiempo + (conectado - datetime.datetime.now()).minutes
+            tiempo = tiempo + (conectado - datetime.datetime.now()).seconds
         # Si no está activo el relé y tenemos más del SOC Mínimo + un 15% adicional de batería,
         if (
             self.carga
             and not self.rele1
-            and self.bateria > self.SOCMinimo + 15
-            and hora > 8
-            and hora < 20
+            and self.bateria >= self.SOCMinimo + 15
+            and hora > config.Inicio
+            and hora < config.Final
         ):
             # Volvemos a conectarlo
             self.enciende()
@@ -255,36 +284,10 @@ class AccesoMQTT:
             print("Consumo: {}W".format(self.consumo))
         # Si ya es por la noche mostramos el total de tiempo conectado durante el día y reiniciamos contador
         if hora == 21 and tiempo > 0:
-            loggin.info(
+            logging.info(
                 'Ha estado activa la carga durante {} minutos y {} segundos'.format(tiempo/60, tiempo%60)
             )
             tiempo = 0
-        # Si tenemos programada carga nocturna, no está activo el rele2 y son la 1
-        if not self.rele2 and self.cargaRed and hora == 23:
-            # Encendemos el segundo relé
-            self.enciende(False)
-            # Ponemos carga a 1 si no lo está
-            if not self.carga:
-                self.client.publish("cmnd/CargaCoche/Mem1", 1)
-            return
-		# Si está activo el relé1, es decir, estamos supuestamente cargando el coche, 
-		# pero el consumo no lo refleja, desconectamos el relé y desactivamos la carga
-        # No lo podemos hacer con el rele2 puesto que no podemos medir el consumo de la calle
-        if self.rele1 and self.consumo < 2000:
-            # Por si está negociando el coche esperamos un poco
-            self.pregunta("Consumo")
-            time.sleep(10)
-            if self.consumo > 2000:
-                return
-            self.client.publish("cmnd/CargaCoche/backlog", "Power1 Off;Power2 Off")
-            self.client.publish("cmnd/CargaCoche/Mem1", 0)
-            logging.info('No hay consumo, por lo que el coche ya está cargado o no conectado. Desconectamos')
-            #os.system(
-            #    'echo Desconectamos el relé por falta de consumo |mutt -s "No hay consumo {} y batería al {}%  Hector.D.Rguez@gmail.com'.format(self.consumo, self.bateria)
-            #)
-            # Sumamos el tiempo que ha estado cargando
-            tiempo = tiempo + (conectado - datetime.datetime.now()).seconds
-            return
 
 
 if __name__ == "__main__":
