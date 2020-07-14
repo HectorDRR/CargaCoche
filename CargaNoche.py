@@ -11,19 +11,19 @@ if len(CargaCoche.sys.argv) == 2:
 else:
     debug = False
     nivel = CargaCoche.logging.INFO
-    # Inicializamos el logging
-    CargaCoche.logging.basicConfig(
-        filename="/tmp/Carga.log",
-        format="%(asctime)s %(message)s",
-        datefmt="%d/%m/%Y %H:%M:%S",
-        level=nivel,
-    )
+# Inicializamos el logging
+CargaCoche.logging.basicConfig(
+    filename="/tmp/Carga.log",
+    format="%(asctime)s %(message)s",
+    datefmt="%d/%m/%Y %H:%M:%S",
+    level=nivel,
+)
 
 # Inicializamos el objeto para acceder al MQTT
 victron = CargaCoche.AccesoMQTT(debug)
-victron.pregunta('CargaRed')
+#victron.pregunta('CargaRed')
 # Nos aseguraos de que ha leído todos los parámetros dejando un tiempo
-CargaCoche.time.sleep(2)
+#CargaCoche.time.sleep(2)
 # Si está activada la variable, lanzamos la carga
 if victron.cargaRed:
     victron.CargaNocturna()
