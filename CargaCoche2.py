@@ -40,10 +40,10 @@ import paho.mqtt.client as mqtt
 Preguntas = {
     "Bateria": "R/{}/system/0/Dc/Battery/Soc".format(config.VictronInterna),
     "Consumo": "R/{}/system/0/Ac/Consumption/L1/Power".format(config.VictronInterna),
-    "Carga": "cmnd/CargaCoche/Mem1",
     "SOCMinimo": "cmnd/CargaCoche/Mem2",
     "CargaRed": "cmnd/CargaCoche/Mem3",
-    "Reles": "cmnd/CargaCoche/STATUS"
+    "Reles": "cmnd/CargaCoche/STATUS",
+    "Carga": "cmnd/CargaCoche/Mem1"
 }
 
    
@@ -90,6 +90,37 @@ class AccesoMQTT:
         for f in Preguntas:
             self.pregunta(f)
 
+    def CargaNocturna(self):
+        """ Configuramos la carga nocturna dependiendo del valor de Mem3
+            1: Cargamos hasta que lo desactivemos manualmente
+            >1: Horas que vamos a estar cargando usando PulseTime
+        """
+        # Si tenemos programada carga nocturna, no está activo el rele2 y son la 1
+        if not self.rele2:
+            pulso = 0
+            # Si hemos programado unas horas en concreto:
+            if self.cargaRed > 1:
+                # Asignamos el valor del pulso en segundos más los 100 primeros que son décimas de segundo
+                pulso = (self.cargaRed * 3600) + 100
+            # Configuramos el PulseTime
+            self.client.publish("cmnd/CargaCoche/PulseTime2", pulso)
+            logging.debug("Pulso: {}".format(pulso))
+            # Encendemos el segundo relé
+            logging.info("Arrancamos la carga nocturna durante {} horas".format(self.cargaRed))
+            self.enciende(False)
+
+    def enciende(self, que=True):
+        """ Manda la orden de activar el contactor de la FV o de la red, asegurándose de desconectar primero el 
+        otro por si estuviera conectado para que no estén ambos a la vez.
+        Por defecto, True, equivale al de la FV, que está conectado al relé 1
+        """
+        if que:
+            mensaje = "Power2 OFF;DELAY 10;Power1 ON"
+        else:
+            mensaje = "Power1 OFF;DELAY 10;Power2 ON"
+        # Mandamos la orden
+        self.client.publish("cmnd/CargaCoche/backlog", mensaje)
+
     def lee_Bateria(self, client, userdata, message):
         """ Esta función es llamada para leer el estado de la batería
 		"""
@@ -102,10 +133,8 @@ class AccesoMQTT:
             return
         self.mensaje = json.loads(message.payload.decode("utf-8"))
         self.bateria = self.mensaje["value"]
-        logging.debug("Bateria al {}%, {}".format(self.bateria, self.mensaje))
 		# Cuando el coche está cargando, mostramos como va la batería
-        if self.rele1:
-            print("Bateria al {}%".format(self.bateria))
+        logging.debug("Bateria al {}%, {}".format(self.bateria, self.mensaje))
 
     def lee_Consumo(self, client, userdata, message):
         """ Esta función es llamada para leer el estado de la batería
@@ -136,12 +165,7 @@ class AccesoMQTT:
         else:
             self.rele2 = False
         logging.debug("Relé1 = {}, Relé2 = {}, {}".format(self.rele1, self.rele2, self.mensaje))
-        if self.debug:
-            print("Relé1 = {}, Relé2 = {}, {}".format(self.rele1, self.rele2, self.mensaje))
-        # Lo mandamos a un fichero en el tmp para que podamos ver el estado en el st
-        with open('/tmp/Coche', 'w') as file:
-            file.writelines(str(self.rele1) + str(self.rele2))
-
+ 
     def lee_Result(self, client, userdata, message):
         """ Esta función es llamada para leer el tanto el SOC Mínimo que tenemos que dejar en la batería
 			como el estado de los relés cuando se activan o desactivan o si cargar o no por la noche
@@ -161,10 +185,10 @@ class AccesoMQTT:
             self.SOCMinimo = int(self.mensaje["Mem2"])
         # Asignamos la carga de red
         if "Mem3" in self.mensaje:
-            if self.mensaje["Mem3"] == "1":
-                self.cargaRed = True
+            if self.mensaje["Mem3"] == "0":
+                self.cargaRed = False
             else:
-                self.cragaRed = False
+                self.cragaRed = int(self.mensaje["Mem3"])
         if "POWER1" in self.mensaje:
             if self.mensaje["POWER1"] == "ON":
                 self.rele1 = True
@@ -175,9 +199,9 @@ class AccesoMQTT:
                 self.rele1 = False
                 # Sumamos el tiempo que ha estado cargando y lo mostramos
                 pp = (datetime.datetime.now() - conectado).seconds
-                if pp > 30:
+                if pp > 120:
                     tiempo = tiempo + pp
-                    logging.info("Tiempo conectado {} segundos".format(pp))
+                    logging.info("Tiempo conectado {} minutos y {} segundos".format(pp/60, pp%60))
 
         if "POWER2" in self.mensaje:
             if self.mensaje["POWER2"] == "ON":
@@ -190,24 +214,28 @@ class AccesoMQTT:
             "SOC Mínimo {}%, Relé1 = {}, Relé2 = {}, carga = {}, flag = {}, cargaRed = {}, {}".format(self.SOCMinimo, self.rele1, self.rele2, self.carga, self.flag, self.cargaRed, self.mensaje)
         )
 
+    def mandaCorreo(self, mensaje):
+        """ Manda correo al usuario informando del estado
+        """
+        import smtplib
+
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(config.Email, config.Clave)
+        server.sendmail("""\
+        From: CargaCoche <none@none.unk>
+        To: Hector.D.Rguez@gmail.com
+        Subject: Información sobre la carga del coche
+        
+        {}
+        """.format(mensaje))
+        server.close()
+        
     def pregunta(self, que="Bateria"):
         """ Manda la petición por MQTT, por defecto, del estado de la batería
 		"""
         # Pedimos por MQTT lo solicitado
         self.client.publish(Preguntas[que], "")
         time.sleep(0.5)
-
-    def enciende(self, que=True):
-        """ Manda la orden de activar el contactor de la FV o de la red, asegurándose de desconectar primero el 
-        otro por si estuviera conectado para que no estén ambos a la vez.
-        Por defecto, True, equivale al de la FV, que está conectado al relé 1
-        """
-        if que:
-            mensaje = "Power2 OFF;DELAY 10;Power1 ON"
-        else:
-            mensaje = "Power1 OFF;DELAY 10;Power2 ON"
-        # Mandamos la orden
-        self.client.publish("cmnd/CargaCoche/backlog", mensaje)
 
     def controla(self):
         """ Controla el estado de la batería y del relé y activa o desactiva 
@@ -244,49 +272,35 @@ class AccesoMQTT:
             # Apagamos relé y quitamos carga
             self.client.publish("cmnd/CargaCoche/backlog", "Power1 0;Mem1 0")
             logging.info('No hay consumo, por lo que el coche ya está cargado o no conectado. Desconectamos')
-            #os.system(
-            #    'echo Desconectamos el relé por falta de consumo |mutt -s "No hay consumo {} y batería al {}%  Hector.D.Rguez@gmail.com'.format(self.consumo, self.bateria)
-            #)
+            self.mandaCorreo('Desconectamos el relé por falta de consumo {} y batería al {}%'.format(self.consumo, self.bateria))
             # Activamos el flag para no seguir procesando
             self.flag = True
             return
-        # Si está activo el relé, la batería está por debajo del 50% y son entre las 8 y las 20
-        if self.rele1 and self.bateria <= self.SOCMinimo and hora > config.Inicio and hora < config.Final:
+        # Si está activo el relé, la batería está por debajo del SON Mínimo (Mem2)
+        if self.rele1 and self.bateria <= self.SOCMinimo:
             # Deberíamos de cortar la carga o pasar a la red, dependiendo de
             # lo que hayamos pedido
             # Esto lo controlaremos más adelante usando los dos botones que
             # 	nos ofrece el SonOff Dual para ponerlos externos, seguramente
-            # 	en la carcasa del cuadro. Por ahora, solo cargamos de la FV
+            # 	en la carcasa del cuadro.
             self.client.publish("cmnd/CargaCoche/POWER1", "OFF")
-            logging.info("Desconectamos el coche al {}%".format(self.bateria))
             # Enviamos un mail comunicando el apagado si no lo hemos enviado antes
             if not hora == self.hora:
-                #os.system(
-                #    'echo Desconectamos el coche |mutt -s "La batería está al {}%" Hector.D.Rguez@gmail.com'.format(self.bateria)
-                #)
+                self.mandaCorreo('echo Desconectamos el coche. La batería está al {}%'.format(self.bateria))
                 self.hora = hora
                 mensaje = "y mandamos correo"
             logging.info("Batería al {}%, desconectamos {}".format(self.bateria, mensaje))
         # Si no está activo el relé y tenemos más del SOC Mínimo + un 15% adicional de batería,
-        if (
-            self.carga
-            and not self.rele1
-            and self.bateria >= self.SOCMinimo + 15
-            and hora > config.Inicio
-            and hora < config.Final
-        ):
+        if self.carga and not self.rele1 and self.bateria >= self.SOCMinimo + 15:
             # Volvemos a conectarlo
             self.enciende()
             if not hora == self.hora:
-                #os.system(
-                #    'echo Conectamos el coche |mutt -s "La batería está al {}%" Hector.D.Rguez@gmail.com'.format(self.bateria)
-                #)
+                self.mandaCorreo('Conectamos el coche. La batería está al {}%'.format(self.bateria))
                 self.hora = hora
                 mensaje = "y mandamos correo"
             logging.info("Batería al {}%, conectamos {}".format(self.bateria, mensaje))
         # Si estamos cargando de la FV, mostramos el consumo
-        if self.rele1:
-            print("Consumo: {}W".format(self.consumo))
+        logging.debug("Consumo: {}W".format(self.consumo))
 
 
 if __name__ == "__main__":
@@ -308,7 +322,7 @@ if __name__ == "__main__":
     # Tiempo de carga cada día
     tiempo = 0
     conectado = datetime.datetime.now()
-    # Nos quedamos en bucle eterno controlando cada 2 minutos
+    # Nos quedamos en bucle eterno controlando
     while True:
         victron.controla()
-        time.sleep(120)
+        time.sleep(60)
