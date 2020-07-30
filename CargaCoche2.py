@@ -5,7 +5,10 @@
 	el SonOff Dual del garaje.
 	Primer botón: Carga solamente de la FV dependiendo de un SOC mínimo
 	Segundo botón: Carga de la FV y si no ha acabado, conmuta a la red 
-	después de las 23 horas (pendiente de implementar)
+	después de las 23 horas
+    Añadimos también control de potencia máxima, para que no se de el caso 
+    de que tenga que tirar de la red cuando estamos cocinando porque el inversor
+    más la FV no puedan suministrar toda la potencia necesaria.
 	Almacenamos en Mem1 si cargar o no, Mem2 la consigna de SOC Mínimo y en Mem3 tipo de carga:
         0 = Cargamos solo de FV
         1 = Nocturna de red
@@ -40,9 +43,10 @@ import paho.mqtt.client as mqtt
 Preguntas = {
     "Bateria": "R/{}/system/0/Dc/Battery/Soc".format(config.VictronInterna),
     "Consumo": "R/{}/system/0/Ac/Consumption/L1/Power".format(config.VictronInterna),
+    "FV": "R/{}/system/0/Ac/PvOnOutput/L1/Power".format(config.VictronInterna),
+    "Reles": "cmnd/CargaCoche/STATUS",
     "SOCMinimo": "cmnd/CargaCoche/Mem2",
     "CargaRed": "cmnd/CargaCoche/Mem3",
-    "Reles": "cmnd/CargaCoche/STATUS",
     "Carga": "cmnd/CargaCoche/Mem1"
 }
 
@@ -64,6 +68,9 @@ class AccesoMQTT:
         self.client.message_callback_add(
             'N{}'.format(Preguntas["Consumo"][1:]), self.lee_Consumo
         )
+        self.client.message_callback_add(
+            'N{}'.format(Preguntas["FV"][1:]), self.lee_FV
+        )
         self.client.message_callback_add("stat/CargaCoche/STATUS", self.lee_EstadoDual)
         self.client.message_callback_add("stat/CargaCoche/RESULT", self.lee_Result)
         # Me subscribo a los tópicos necesarios, el SOC de la batería, el consumo y el estado del SonOff
@@ -71,6 +78,7 @@ class AccesoMQTT:
             [
                 ('N{}'.format(Preguntas["Bateria"][1:]), 0),
                 ('N{}'.format(Preguntas["Consumo"][1:]), 0),
+                ('N{}'.format(Preguntas["FV"][1:]), 0),
                 ("stat/CargaCoche/#", 0),
             ]
         )
@@ -85,7 +93,9 @@ class AccesoMQTT:
         self.SOCMinimo = 50
         self.cargaRed = False
         self.consumo = 0
+        self.fv = 0
         self.flag = False
+        self.parcial = 0
         # Obtenemos valores
         for f in Preguntas:
             self.pregunta(f)
@@ -95,19 +105,17 @@ class AccesoMQTT:
             1: Cargamos hasta que lo desactivemos manualmente
             >1: Horas que vamos a estar cargando usando PulseTime
         """
-        # Si tenemos programada carga nocturna, no está activo el rele2 y son la 1
-        if not self.rele2:
-            pulso = 0
-            # Si hemos programado unas horas en concreto:
-            if self.cargaRed > 1:
-                # Asignamos el valor del pulso en segundos más los 100 primeros que son décimas de segundo
-                pulso = (self.cargaRed * 3600) + 100
-            # Configuramos el PulseTime
-            self.client.publish("cmnd/CargaCoche/PulseTime2", pulso)
-            logging.debug("Pulso: {}".format(pulso))
-            # Encendemos el segundo relé
-            logging.info("Arrancamos la carga nocturna durante {} horas".format(self.cargaRed))
-            self.enciende(False)
+        pulso = 0
+        # Si hemos programado unas horas en concreto:
+        if self.cargaRed > 1:
+            # Asignamos el valor del pulso en segundos más los 100 primeros que son décimas de segundo
+            pulso = (self.cargaRed * 3600) + 100
+        # Configuramos el PulseTime
+        self.client.publish("cmnd/CargaCoche/PulseTime2", pulso)
+        logging.debug("Pulso: {}".format(pulso))
+        # Encendemos el segundo relé
+        logging.info("Arrancamos la carga nocturna durante {} horas".format(self.cargaRed))
+        self.enciende(False)
 
     def enciende(self, que=True):
         """ Manda la orden de activar el contactor de la FV o de la red, asegurándose de desconectar primero el 
@@ -166,6 +174,20 @@ class AccesoMQTT:
             self.rele2 = False
         logging.debug("Relé1 = {}, Relé2 = {}, {}".format(self.rele1, self.rele2, self.mensaje))
  
+    def lee_FV(self, client, userdata, message):
+        """ Esta función es llamada para leer la producción de la FV
+		"""
+        # Lo importamos en formato json
+        if self.debug:
+            print(message.payload)
+        # A veces recibimos mensajes vacíos, así que en ese caso ignoramos,
+        # 	puesto que si no obtenemos un error en el json.loads()
+        if len(message.payload.decode("utf-8")) == 0:
+            return
+        self.mensaje = json.loads(message.payload.decode("utf-8"))
+        self.fv = self.mensaje["value"]
+        logging.debug("FV: {}W, {}".format(round(self.fv), self.mensaje))
+
     def lee_Result(self, client, userdata, message):
         """ Esta función es llamada para leer el tanto el SOC Mínimo que tenemos que dejar en la batería
 			como el estado de los relés cuando se activan o desactivan o si cargar o no por la noche
@@ -195,13 +217,14 @@ class AccesoMQTT:
                 self.flag = False
                 # Guardamos el momento en el que conectamos para obtener el tiempo total al día
                 conectado = datetime.datetime.now()
+                self.parcial = 0
             else:
                 self.rele1 = False
                 # Sumamos el tiempo que ha estado cargando y lo mostramos
-                pp = (datetime.datetime.now() - conectado).seconds
-                if pp > 120:
-                    tiempo = tiempo + pp
-                    logging.info("Tiempo conectado {} minutos y {} segundos".format(pp/60, pp%60))
+                self.parcial = (datetime.datetime.now() - conectado).seconds
+                if self.parcial > 120:
+                    tiempo = tiempo + self.parcial
+                    logging.info("Tiempo conectado {} minutos y {} segundos".format(self.parcial/60, self.parcial%60))
 
         if "POWER2" in self.mensaje:
             if self.mensaje["POWER2"] == "ON":
@@ -211,23 +234,19 @@ class AccesoMQTT:
                 self.rele2 = False
        # Mostramos el estado del SonOff. Si ponemos el SOCMinimo a 10 continuará cargando indefinidamente
         logging.info(
-            "SOC Mínimo {}%, Relé1 = {}, Relé2 = {}, carga = {}, flag = {}, cargaRed = {}, {}".format(self.SOCMinimo, self.rele1, self.rele2, self.carga, self.flag, self.cargaRed, self.mensaje)
+            "SOC Mínimo {}%, Relé1 = {}, Relé2 = {}, carga = {}, flag = {}, cargaRed = {}, batería {}%, consumo {}W, FV: {}W, {}".format(self.SOCMinimo, self.rele1, self.rele2, self.carga, self.flag, self.cargaRed, self.bateria, self.consumo, self.fv, self.mensaje)
         )
 
-    def mandaCorreo(self, mensaje):
+    def mandaCorreo(self, mensaje, asunto = 'Información sobre carga del coche'):
         """ Manda correo al usuario informando del estado
         """
         import smtplib
 
         server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
         server.login(config.Email, config.Clave)
-        server.sendmail("""\
-        From: CargaCoche <none@none.unk>
-        To: Hector.D.Rguez@gmail.com
-        Subject: Información sobre la carga del coche
-        
-        {}
-        """.format(mensaje))
+        de = "CargaCoche <none@none.unk>"
+        cuerpo = 'From: {}\nTo: {}\nSubject: {}\n\n{}'.format(de, config.Email, asunto, mensaje)
+        server.sendmail(de, config.Email, cuerpo)
         server.close()
         
     def pregunta(self, que="Bateria"):
@@ -246,20 +265,24 @@ class AccesoMQTT:
         hora = datetime.datetime.now().hour
         mensaje = ""
         # Si ya es por la noche mostramos el total de tiempo conectado durante el día y reiniciamos contador
-        if hora == 21 and tiempo > 0:
+        if hora == 22 and tiempo > 0:
             logging.info(
                 'Ha estado activa la carga durante {} minutos y {} segundos'.format(tiempo/60, tiempo%60)
             )
             tiempo = 0
+        # Si no está activo el relé de la red, es la hora de empezarla, y cargaRed es > 0 activamos la carga nocturna
+        if not self.rele2 and hora == config.InicioRed and self.cargaRed:
+            self.cargaNocturna()
         # Si no hemos activado el flag de carga o se ha desactivado por falta de consumo, lo avisamos una sola vez y salimos
         if not self.carga:
             if not self.flag:
                 logging.info('El flag de carga no está activado')
                 self.flag = True
             return
-        # Obtenemos los datos de estado de la batería y consumo
+        # Obtenemos los datos de estado de la batería, consumo y FV
         self.pregunta()
         self.pregunta("Consumo")
+        self.pregunta("FV")
    	    # Si está activo el relé1, es decir, estamos supuestamente cargando el coche, 
         # pero el consumo no lo refleja, desconectamos el relé y desactivamos la carga
         # No lo podemos hacer con el rele2 puesto que no podemos medir el consumo de la calle
@@ -271,8 +294,11 @@ class AccesoMQTT:
                 return
             # Apagamos relé y quitamos carga
             self.client.publish("cmnd/CargaCoche/backlog", "Power1 0;Mem1 0")
+            coletilla = ''
+            if self.parcial > 120:
+                coletilla = ' Tiempo conectado {}:{}'.format(self.parcial/60, self.parcial%60)
             logging.info('No hay consumo, por lo que el coche ya está cargado o no conectado. Desconectamos')
-            self.mandaCorreo('Desconectamos el relé por falta de consumo {} y batería al {}%'.format(self.consumo, self.bateria))
+            self.mandaCorreo('Batería al {}%.'.format(self.bateria, coletilla), 'Desconectamos por falta de consumo {}'.format(self.consumo))
             # Activamos el flag para no seguir procesando
             self.flag = True
             return
@@ -285,17 +311,34 @@ class AccesoMQTT:
             # 	en la carcasa del cuadro.
             self.client.publish("cmnd/CargaCoche/POWER1", "OFF")
             # Enviamos un mail comunicando el apagado si no lo hemos enviado antes
+            time.sleep(1)
+            coletilla = ''
+            if self.parcial > 120:
+                coletilla = ' Tiempo conectado {}:{}'.format(self.parcial/60, self.parcial%60)
             if not hora == self.hora:
-                self.mandaCorreo('echo Desconectamos el coche. La batería está al {}%'.format(self.bateria))
+                self.mandaCorreo('La batería está al {}%. {}'.format(self.bateria, coletilla), 'Desconectamos el coche')
                 self.hora = hora
                 mensaje = "y mandamos correo"
             logging.info("Batería al {}%, desconectamos {}".format(self.bateria, mensaje))
-        # Si no está activo el relé y tenemos más del SOC Mínimo + un 15% adicional de batería,
-        if self.carga and not self.rele1 and self.bateria >= self.SOCMinimo + 15:
+        # Si está activo el relé pero el consumo es superior al límite impuesto, paramos la carga
+        if self.rele1 and self.consumo - self.fv > config.Potencia:
+            self.client.publish("cmnd/CargaCoche/POWER1", "OFF")
+            # Enviamos un mail comunicando el apagado si no lo hemos enviado antes
+            time.sleep(1)
+            coletilla = ''
+            if self.parcial > 120:
+                coletilla = ' Tiempo conectado {}:{}'.format(self.parcial/60, self.parcial%60)
+            if not hora == self.hora:
+                self.mandaCorreo('El consumo es de {}W y la FV está dando {}. {}'.format(self.consumo, self.fv, coletilla), 'Desconectamos el coche por exceso de consumo')
+                self.hora = hora
+                mensaje = "y mandamos correo"
+            logging.info("Batería al {}%, desconectamos {}".format(self.bateria, mensaje))
+        # Si no está activo el relé y tenemos más del SOC Mínimo + un 15% adicional de batería y el consumo es moderado
+        if self.carga and not self.rele1 and self.bateria >= self.SOCMinimo + 15 and self.consumo + 3000 - self.fv < config.Potencia:
             # Volvemos a conectarlo
             self.enciende()
             if not hora == self.hora:
-                self.mandaCorreo('Conectamos el coche. La batería está al {}%'.format(self.bateria))
+                self.mandaCorreo('La batería está al {}%'.format(self.bateria), 'Conectamos el coche')
                 self.hora = hora
                 mensaje = "y mandamos correo"
             logging.info("Batería al {}%, conectamos {}".format(self.bateria, mensaje))
