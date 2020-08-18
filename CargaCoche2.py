@@ -9,23 +9,21 @@
     Añadimos también control de potencia máxima, para que no se de el caso 
     de que tenga que tirar de la red cuando estamos cocinando porque el inversor
     más la FV no puedan suministrar toda la potencia necesaria.
-	Almacenamos en Mem1 si cargar o no, Mem2 la consigna de SOC Mínimo y en Mem3 tipo de carga:
-        0 = Cargamos solo de FV
-        1 = Nocturna de red
+	Almacenamos en Mem1 si cargar o no, Mem2 la consigna de SOC Mínimo y en Mem3 carga nocturna (1) y cuantas horas (>1):
     Programación de botones. Poniendo el weblog a 4 nos cuenta lo siguiente:
     Botón normal: code 0404 enciende, 0405 apaga
     Botón 0: code 0401 enciende, 0400 apaga
     Botón 1: code 0402 enciende, 0403 apaga
     Todos los detecta como Button1 multi-press 1
     Configuramos una regla en el SonOff para que cambie el comportamiento de los botones y que reinicie las
-    variables, carga de fotovoltaica Mem1 a 1 y carga de red Mem3 a 0 a las 8 AM:
+    variables, carga de fotovoltaica Mem1 a 1 y carga de red Mem3 a 0 a las 9:
     *** Parece ser que los botones en pines activan directamente los relés, aunque le programemos una rule.
         El button0 se corresponde realmente con el 2 en la programación, y el 1 con el uno. La diferencia
         es que el botón normal, que también es el uno, si que solo hace lo definido en la rule. A la espera
         de ver si podemos cablear directamente el botón normal, pasamos a programar en la rule la desconexión
         de los relés.
     ***
-    rule1 on button1#state do backlog mem1 1;power1 off endon on button2#state do backlog mem3 1;power2 off endon on time#Minute=480 do backlog mem1 1; mem3 0 endon
+    rule1 on button1#state do backlog mem1 1;power1 off endon on button2#state do backlog mem3 1;power2 off endon on time#Minute=540 do backlog mem1 1; mem3 0 endon
     Para que no haya problemas con las actualizaciones de las imágenes, tenemos que instalar las librerías
     en nuestro home, para ello creamos una carpeta lib en /home/root y en ella instalamos el Paho-MQTT y
     definimos un .bashrc donde hacemos un 
@@ -265,8 +263,7 @@ class AccesoMQTT:
             )
             tiempo = 0
         # Si no está activo el relé de la red, es la hora de empezarla, y cargaRed es > 0 activamos la carga nocturna
-        if self.cargaRed and not self.rele2 and hora == config.InicioRed and self.cargaRed:
-            #self.cargaNocturna()
+        if self.cargaRed and not self.rele2 and hora == config.InicioRed:
             """ Configuramos la carga nocturna dependiendo del valor de Mem3
             1: Cargamos hasta que lo desactivemos manualmente
             >1: Horas que vamos a estar cargando usando PulseTime

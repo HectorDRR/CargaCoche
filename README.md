@@ -20,5 +20,16 @@ Es necesario instalar la librería Paho-MQTT para su correcto funcionamiento as�
 
 Historia:
 
+2020-08-18, Ver. 0.9: Se ha implementado la carga nocturna permitiendo definir el número de horas que queremos que esté 
+	funcionando (Mem3). Se ha implementado también el control de potencia para no exceder la del Inversor + FV cuando estamos 
+	cargando debido a algún pico de consumo. También hemos puesto un mínimo de potencia FV para no ciclar la batería en exceso
+	así como una consigna de potencia de consumo por debajo de la cual consideramos que el coche ha terminado de cargar.
+	Todos los parámteros se establecen en el config.py que se lee al arrancar el programa.
+	También llevamos un control del tiempo que se ha estado cargando durante el día indicando el total en el log a las 21 horas.
+	Creamos en /data un fichero rcS.local para que cuando haya actualizaciones de firmware o se reinicie el venus arranque la 
+	aplicación de manera automática, el contenido del fichero es el siguiente comando:
+	#!/bin/sh
+	screen -AdmL -Logfile /tmp/Carga.log -S CargaCoche -h 20000 /home/root/lib/CargaCoche2.py
+	exit 0
 2020-06-27, Ver. 0.5: Implementada la carga diurna incluyendo la consulta del consumo para desconectar el relé en caso de que no
-					haya consumo por que no haya ningún coche enchufado.
+	haya consumo por que no haya ningún coche enchufado.
