@@ -233,7 +233,7 @@ class AccesoMQTT:
         # Tenemos que contemplar la posibilidad de que no tengamos Internet en el momento y evitar que casque el programa
         try:
             server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-        except:
+        except BaseException:
             return
         server.login(config.Email, config.Clave)
         de = "CargaCoche <none@none.unk>"
@@ -345,8 +345,8 @@ class AccesoMQTT:
         if self.tePasaste and self.bateria > self.SOCMinimo and self.consumo + config.PotenciaPR - self.fv < config.PotenciaMax:
             self.enciende()
             logging.info("Volvemos a conectar puesto que ha bajado el consumo y la batería está al {}%".format(self.bateria))
-        # Si no está activo el relé y tenemos más del SOC Mínimo + un 15% adicional de batería, el consumo es moderado y tenemos suficiente FV
-        if self.carga and not self.rele1 and self.bateria >= self.SOCMinimo + 15 and self.consumo + config.PotenciaPR - self.fv < config.PotenciaMax and self.fv >= config.PotenciaFVMin:
+        # Si no está activo el relé y tenemos más del SOC Mínimo + un margen adicional de batería, el consumo es moderado y tenemos suficiente FV
+        if self.carga and not self.rele1 and self.bateria >= self.SOCMinimo + config.Margen and self.consumo + config.PotenciaPR - self.fv < config.PotenciaMax and self.fv >= config.PotenciaFVMin:
             # Volvemos a conectarlo
             self.enciende()
             if not hora == self.hora:
