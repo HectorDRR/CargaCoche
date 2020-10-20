@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """ Para controlar la carga del coche en función de la batería que existe en 
 	el sistema FV y también dependiendo del botón que haya sido apretado en 
-	el SonOff Dual del garaje.
+	el SonOff Dual R2 del garaje.
 	Primer botón: Carga solamente de la FV dependiendo de un SOC mínimo
 	Segundo botón: Carga de la FV y si no ha acabado, conmuta a la red 
 	después de las 23 horas
@@ -10,20 +10,22 @@
     de que tenga que tirar de la red cuando estamos cocinando porque el inversor
     más la FV no puedan suministrar toda la potencia necesaria.
 	Almacenamos en Mem1 si cargar o no, Mem2 la consigna de SOC Mínimo y en Mem3 carga nocturna (1) y cuantas horas (>1):
+    %%% Esta información hay que actualizarla al R2
     Programación de botones. Poniendo el weblog a 4 nos cuenta lo siguiente:
     Botón normal: code 0404 enciende, 0405 apaga
     Botón 0: code 0401 enciende, 0400 apaga
     Botón 1: code 0402 enciende, 0403 apaga
     Todos los detecta como Button1 multi-press 1
     Configuramos una regla en el SonOff para que cambie el comportamiento de los botones y que reinicie las
-    variables, carga de fotovoltaica Mem1 a 1 y carga de red Mem3 a 0 a las 9:
+    variables, carga de fotovoltaica Mem1 a 1 y carga de red Mem3 a 0 a las 9. También ponemos el pulsetime2 a 0:
     *** Parece ser que los botones en pines activan directamente los relés, aunque le programemos una rule.
         El button0 se corresponde realmente con el 2 en la programación, y el 1 con el uno. La diferencia
         es que el botón normal, que también es el uno, si que solo hace lo definido en la rule. A la espera
         de ver si podemos cablear directamente el botón normal, pasamos a programar en la rule la desconexión
         de los relés.
     ***
-    rule1 on button1#state do backlog mem1 1;power1 off endon on button2#state do backlog mem3 1;power2 off endon on time#Minute=540 do backlog mem1 1; mem3 0 endon
+    %%%
+    rule1 on button1#state do mem1 1 endon on button2#state do mem3 1 endon on time#Minute=540 do backlog mem1 1; mem3 0; pulsetime2 0 endon
     Para que no haya problemas con las actualizaciones de las imágenes, tenemos que instalar las librerías
     en nuestro home, para ello creamos una carpeta lib en /home/root y en ella instalamos el Paho-MQTT y
     definimos un .bashrc donde hacemos un 
