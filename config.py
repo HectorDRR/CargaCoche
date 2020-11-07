@@ -10,13 +10,13 @@ Email = 'Hector.D.Rguez@gmail.com'
 # Clave del correo
 Clave = ""
 # Hora de comienzo (-1 en verano por llevar UTC el Venus GX)
-Inicio = 8
+Inicio = 10
 # Hora de final de carga FV
 Final = 19
 # Hora de inicio de carga de Red
-InicioRed = 22
+InicioRed = 23
 # Hora de finalización de carga de Red
-FinalRed = 8
+FinalRed = 9
 # Potencia pico que no se quiere sobrepasar. En nuestro caso, la que da el inversor de las baterías y al que sumaremos la que dan las placas
 PotenciaMax = 4300
 # Potencia que usa el PR

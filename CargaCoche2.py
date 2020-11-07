@@ -59,8 +59,22 @@ class AccesoMQTT:
         self.debug = debug
         # Creo el cliente
         self.client = mqtt.Client("Coche")
-        # Conecto al broker
-        self.client.connect('localhost')
+        # Conecto al broker. Como cuando se reinicia hemos visto que es posible que el servicio se active 
+        # después del programa, ponemos varios reintentos para esperar por el servicio
+        # Definimos una variable para chequear desde el contorl principal del programa si la conexión ha ido bien
+        self.noResponde = 0
+        activo = -1
+        while True:
+            try:
+                activo = self.client.connect('localhost')
+            except:
+                self.noResponde += 1
+                time.sleep(2)
+            if self.noResponde == 5:
+                return
+            # Cuando la conexión se realiza sin problema devuelve un 0, así que salimos del bucle
+            if activo == 0:
+                break
         # Asigno la función que va a procesar los mensajes recibidos
         self.client.message_callback_add(
             'N{}'.format(Preguntas["Bateria"][1:]), self.lee_Bateria
@@ -376,6 +390,9 @@ if __name__ == "__main__":
     logging.info("Arrancamos el Control de Carga")
     # Inicializamos el objeto para acceder al MQTT
     victron = AccesoMQTT(debug)
+    if victron.noResponde > 1:
+        logging.info('Después de 5 intentos, 10 segundos, no hemos conseguido contactar con el servicio de MQTT')
+        exit()
     # Tiempo de carga cada día
     tiempo = 0
     conectado = 0
