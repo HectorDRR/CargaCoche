@@ -9,7 +9,7 @@
     Añadimos también control de potencia máxima, para que no se de el caso 
     de que tenga que tirar de la red cuando estamos cocinando porque el inversor
     más la FV no puedan suministrar toda la potencia necesaria.
-	Almacenamos en Mem1 si cargar o no, Mem2 la consigna de SOC Mínimo y en Mem3 carga nocturna (1) y cuantas horas (>1):
+	Almacenamos en Mem1 si cargar o no, Mem2 la consigna de SOC Mínimo y en Var3 carga nocturna (1) y cuantas horas (>1):
     %%% Esta información hay que actualizarla al R2
     Programación de botones. Poniendo el weblog a 4 nos cuenta lo siguiente:
     Botón normal: code 0404 enciende, 0405 apaga
@@ -17,7 +17,7 @@
     Botón 1: code 0402 enciende, 0403 apaga
     Todos los detecta como Button1 multi-press 1
     Configuramos una regla en el SonOff para que cambie el comportamiento de los botones y que reinicie las
-    variables, carga de fotovoltaica Mem1 a 1 y carga de red Mem3 a 0 a las 9. También ponemos el pulsetime2 a 0:
+    variables, carga de fotovoltaica Mem1 a 1 y carga de red Var3 a 0 a las 9. También ponemos el pulsetime2 a 0:
     *** Parece ser que los botones en pines activan directamente los relés, aunque le programemos una rule.
         El button0 se corresponde realmente con el 2 en la programación, y el 1 con el uno. La diferencia
         es que el botón normal, que también es el uno, si que solo hace lo definido en la rule. A la espera
@@ -25,7 +25,7 @@
         de los relés.
     ***
     %%%
-    rule1 on button1#state do mem1 1 endon on button2#state do mem3 1 endon on time#Minute=540 do backlog mem1 1; mem3 0; pulsetime2 0 endon
+    rule1 on button1#state do mem1 1 endon on button2#state do add3 1 endon on time#Minute=540 do backlog mem1 1; var3 0; pulsetime2 0 endon
     Para que no haya problemas con las actualizaciones de las imágenes, tenemos que instalar las librerías
     en nuestro home, para ello creamos una carpeta lib en /home/root y en ella instalamos el Paho-MQTT y
     definimos un .bashrc donde hacemos un 
@@ -39,14 +39,14 @@ import time, os, datetime, sys, json, logging
 import config
 import paho.mqtt.client as mqtt
 
-# Definimos una constante con las cadenas para preguntar por MQTT de manera que el códgio sea más legible
+# Definimos una constante con las cadenas para preguntar por MQTT de manera que el código sea más legible
 Preguntas = {
     "Bateria": "R/{}/system/0/Dc/Battery/Soc".format(config.VictronInterna),
     "Consumo": "R/{}/system/0/Ac/Consumption/L1/Power".format(config.VictronInterna),
     "FV": "R/{}/system/0/Ac/PvOnOutput/L1/Power".format(config.VictronInterna),
     "Reles": "cmnd/CargaCoche/STATUS",
     "SOCMinimo": "cmnd/CargaCoche/Mem2",
-    "CargaRed": "cmnd/CargaCoche/Mem3",
+    "CargaRed": "cmnd/CargaCoche/Var3",
     "Carga": "cmnd/CargaCoche/Mem1"
 }
 
@@ -61,7 +61,7 @@ class AccesoMQTT:
         self.client = mqtt.Client("Coche")
         # Conecto al broker. Como cuando se reinicia hemos visto que es posible que el servicio se active 
         # después del programa, ponemos varios reintentos para esperar por el servicio
-        # Definimos una variable para chequear desde el contorl principal del programa si la conexión ha ido bien
+        # Definimos una variable para chequear desde el control principal del programa si la conexión ha ido bien
         self.noResponde = 0
         activo = -1
         while True:
@@ -197,18 +197,29 @@ class AccesoMQTT:
         if "Mem1" in self.mensaje:
             if self.mensaje["Mem1"] == "1":
                 self.carga = True
+                # Hacemos encenderse el led durante 5 segundos para confirmar que se ha recibido la orden de carga
+                self.client.publish("cmnd/CargaCoche/backlog", "ledpower 1; delay 50;ledpower 0")
                 self.flag = False
             else:
                 self.carga = False
 		# Asignamos la consigna de SOC Mínimo
         if "Mem2" in self.mensaje:
             self.SOCMinimo = int(self.mensaje["Mem2"])
-        # Asignamos la carga de red
-        if "Mem3" in self.mensaje:
-            if self.mensaje["Mem3"] == "0":
+        # Asignamos la carga de red si la hacemos a mano
+        if "Var3" in self.mensaje:
+            if self.mensaje["Var3"] == "0":
                 self.cargaRed = False
             else:
-                self.cargaRed = int(self.mensaje["Mem3"])
+                self.cargaRed = int(float(self.mensaje["Var3"]))
+        # Asignamos la carga de red si la hacemos a través del botón rojo
+        if "Add3" in self.mensaje:
+            if self.mensaje["Add3"] == "0":
+                self.cargaRed = False
+            else:
+                self.cargaRed = int(float(self.mensaje["Add3"]))
+                for f in range(0, self.cargaRed, 1):
+                    # Hacemos encenderse el led durante 1 segundo por cada toque para confirmar que se ha recibido la orden de carga nocturna
+                    self.client.publish("cmnd/CargaCoche/backlog", "ledpower 1;delay 10;ledpower 0;delay 10")
         if "POWER1" in self.mensaje:
             if self.mensaje["POWER1"] == "ON":
                 self.rele1 = True
@@ -219,7 +230,7 @@ class AccesoMQTT:
                 conectado = datetime.datetime.now()
                 self.parcial = 0
             else:
-                # Cuando activamos el botón producimos un Power Off aunque no estuviera enecendido, lo que hace que informe
+                # Cuando activamos el botón producimos un Power Off aunque no estuviera encendido, lo que hace que informe
                 # erróneamente del tiempo que llevaba conectado, por lo que antes hacemos una comprobación
                 # Si antes estaba encendido procedemos con el tema del tiempo
                 if self.rele1:
@@ -280,7 +291,7 @@ class AccesoMQTT:
             tiempo = 0
         # Si no está activo el relé de la red, es la hora de empezarla, y cargaRed es > 0 activamos la carga nocturna
         if self.cargaRed and not self.rele2 and hora == config.InicioRed:
-            """ Configuramos la carga nocturna dependiendo del valor de Mem3
+            """ Configuramos la carga nocturna dependiendo del valor de Var3
             1: Cargamos hasta que lo desactivemos manualmente
             >1: Horas que vamos a estar cargando usando PulseTime
             """
