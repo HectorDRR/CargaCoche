@@ -23,9 +23,12 @@
         de los relés.
     ***
     %%%
-    Configuramos una regla en el SonOff para que cambie el comportamiento de los botones y que reinicie las
-    variables, carga de fotovoltaica Mem1 a 1 a las 9. También ponemos el pulsetime2 a 0 y a las 13 apagamos el relé de la red:
-    rule1 on button1#state do mem1 1 endon on button2#state do add3 1 endon on time#Minute=540 do backlog mem1 1; pulsetime2 0 endon on time#Minute=780 do power2 off endon
+    Configuramos una regla en el SonOff para que cambie el comportamiento de los botones, haga encender el 
+    led durante 5 segundos cuando activamos la carga con el botón verde que reinicie las variables, 
+    carga de fotovoltaica Mem1 a 1 a las 9. También ponemos el pulsetime2 a 0 y a las 13 apagamos el relé de la red:
+    rule1 on button1#state do backlog mem1 1;LedPower1 on;Delay 50;LedPower1 off endon on button2#state do add3 1 endon on time#Minute=540 do backlog mem1 1; pulsetime2 0 endon on time#Minute=780 do power2 off endon
+    Y configuramos una segunda regla para hacer parpadear el Led tantas veces como horas hemos programado la carga nocturna con el botón rojo
+    rule2 on var3#state do var5 %var3% endon on var5#state>0 do backlog Ledpower1 on;delay 10;ledpower1;sub5 1 off endon
     Para que no haya problemas con las actualizaciones de las imágenes, tenemos que instalar las librerías
     en nuestro home, para ello creamos una carpeta lib en /home/root y en ella instalamos el Paho-MQTT y
     definimos un .bashrc donde hacemos un 
@@ -197,8 +200,6 @@ class AccesoMQTT:
         if "Mem1" in self.mensaje:
             if self.mensaje["Mem1"] == "1":
                 self.carga = True
-                # Hacemos encenderse el led durante 5 segundos para confirmar que se ha recibido la orden de carga
-                self.client.publish("cmnd/CargaCoche/backlog", "ledpower 1; delay 50;ledpower 0")
                 self.flag = False
             else:
                 self.carga = False
@@ -217,9 +218,6 @@ class AccesoMQTT:
                 self.cargaRed = False
             else:
                 self.cargaRed = int(float(self.mensaje["Add3"]))
-                for f in range(0, self.cargaRed, 1):
-                    # Hacemos encenderse el led durante 1 segundo por cada toque para confirmar que se ha recibido la orden de carga nocturna
-                    self.client.publish("cmnd/CargaCoche/backlog", "ledpower 1;delay 10;ledpower 0;delay 10")
         if "POWER1" in self.mensaje:
             if self.mensaje["POWER1"] == "ON":
                 self.rele1 = True
@@ -292,7 +290,7 @@ class AccesoMQTT:
         # Si no está activo el relé de la red, es la hora de empezarla, y cargaRed es > 0 activamos la carga nocturna
         # Ampliamos el horario de comprobación de manera que no solo se active a la hora de InicioRed sino en todo el periodo
         # hasta FinalRed, de esta manera si nos ha faltado carga por la mañana podemos volver a activarla con el botón rojo.
-        if self.cargaRed and not self.rele2 and hora > config.InicioRed and hora < config.FinalRed:
+        if self.cargaRed and not self.rele2 and (hora >= config.InicioRed or hora <= config.FinalRed):
             """ Configuramos la carga nocturna dependiendo del valor de Var3
             1: Cargamos hasta que lo desactivemos manualmente
             >1: Horas que vamos a estar cargando usando PulseTime
@@ -320,7 +318,7 @@ class AccesoMQTT:
         self.pregunta()
         self.pregunta("Consumo")
         self.pregunta("FV")
-   	    # Si está activo el relé1, es decir, estamos supuestamente cargando el coche, 
+        # Si está activo el relé1, es decir, estamos supuestamente cargando el coche, 
         # pero el consumo no lo refleja, desconectamos el relé y desactivamos la carga
         # No lo podemos hacer con el rele2 puesto que no podemos medir el consumo de la calle
         if self.rele1 and self.consumo < config.PotenciaMinPR:
