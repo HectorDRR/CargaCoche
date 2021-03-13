@@ -28,7 +28,7 @@
     carga de fotovoltaica Mem1 a 1 a las 9. También ponemos el pulsetime2 a 0 y a las 13 apagamos el relé de la red:
     rule1 on button1#state do backlog mem1 1;LedPower1 on;Delay 50;LedPower1 off endon on button2#state do add3 1 endon on time#Minute=540 do backlog mem1 1; pulsetime2 0 endon on time#Minute=780 do power2 off endon
     Y configuramos una segunda regla para hacer parpadear el Led tantas veces como horas hemos programado la carga nocturna con el botón rojo
-    rule2 on var3#state do var5 %var3% endon on var5#state>0 do backlog Ledpower1 on;delay 10;ledpower1;sub5 1 off endon
+    rule2 on var3#state>0 do var5 %var3% endon on var5#state>0 do backlog Ledpower1 on;delay 10;ledpower1 off;sub5 1 endon
     Para que no haya problemas con las actualizaciones de las imágenes, tenemos que instalar las librerías
     en nuestro home, para ello creamos una carpeta lib en /home/root y en ella instalamos el Paho-MQTT y
     definimos un .bashrc donde hacemos un 
