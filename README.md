@@ -20,6 +20,11 @@ Es necesario instalar la librería Paho-MQTT para su correcto funcionamiento as�
 
 Historia:
 
+2021-04-06, Ver. 1.1: Después de bastante tiempo funcionando de manera estable, añadimos también la funcionalidad de parar 
+	la carga nocturna en caso de que se active la placa de ACS y ésta tenga que tirar también de la red, y esperamos hasta que
+	termine para volver a lanzar la carga nocturna por el tiempo restante.
+	También hemos hecho que se puedan programa x horas de carga nocturna según las veces que apretamos el botón, asi como 
+	mostrar a través del led del SonOff la actividad de los dos botones.
 2020-08-18, Ver. 0.9: Se ha implementado la carga nocturna permitiendo definir el número de horas que queremos que esté 
 	funcionando (Mem3). Se ha implementado también el control de potencia para no exceder la del Inversor + FV cuando estamos 
 	cargando debido a algún pico de consumo. También hemos puesto un mínimo de potencia FV para no ciclar la batería en exceso
