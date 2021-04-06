@@ -50,9 +50,10 @@ Preguntas = {
     "Reles": "cmnd/CargaCoche/STATUS",
     "SOCMinimo": "cmnd/CargaCoche/Mem2",
     "CargaRed": "cmnd/CargaCoche/Var3",
-    "Carga": "cmnd/CargaCoche/Mem1"
+    "Carga": "cmnd/CargaCoche/Mem1",
+    "Pulse": "cmnd/CargaCoche/PulseTime2",
+    "PlacaPulse": "cmnd/placa/PulseTime1"
 }
-
    
 class AccesoMQTT:
     """ Para acceder al Venus GX a través de MQTT de cara a gestionar la recarga del coche del sistema FV
@@ -90,6 +91,7 @@ class AccesoMQTT:
         )
         self.client.message_callback_add("stat/CargaCoche/STATUS", self.lee_EstadoDual)
         self.client.message_callback_add("stat/CargaCoche/RESULT", self.lee_Result)
+        self.client.message_callback_add("stat/placa/RESULT", self.lee_Placa)
         # Me subscribo a los tópicos necesarios, el SOC de la batería, el consumo y el estado del SonOff
         self.client.subscribe(
             [
@@ -97,14 +99,19 @@ class AccesoMQTT:
                 ('N{}'.format(Preguntas["Consumo"][1:]), 0),
                 ('N{}'.format(Preguntas["FV"][1:]), 0),
                 ("stat/CargaCoche/#", 0),
+                ("stat/placa/RESULT", 0)
             ]
         )
         # Comenzamos el bucle
         self.client.loop_start()
         # Inicializamos la variable que servirá para que no me mande más de un mensaje a la hora
+        self.acs = 0
         self.bateria = 0
         self.hora = 0
         self.carga = True
+        self.placa = 0
+        self.placaquedan = 0
+        self.quedan = 0
         self.rele1 = 0
         self.rele2 = 0
         self.SOCMinimo = 50
@@ -189,6 +196,20 @@ class AccesoMQTT:
         self.fv = self.mensaje["value"]
         logging.debug("FV: {}W, {}".format(round(self.fv), self.mensaje))
 
+    def lee_Placa(self, client, userdata, message):
+        """ Se encarga de obtener el estado de la placa de ACS y el tiempo que le queda para apagarse
+        """
+        # Lo importamos en formato json
+        self.mensaje = json.loads(message.payload.decode("utf-8"))
+        # Asignamos la carga
+        if "POWER" in self.mensaje:
+            if self.mensaje["POWER"] == "ON":
+                self.placa = True
+            else:
+                self.placa = False
+        if "PulseTime1" in self.mensaje:
+            self.placaquedan = self.mensaje["PulseTime1"]["Remaining"]
+            
     def lee_Result(self, client, userdata, message):
         """ Esta función es llamada para leer el tanto el SOC Mínimo que tenemos que dejar en la batería
 			como el estado de los relés cuando se activan o desactivan o si cargar o no por la noche
@@ -245,9 +266,13 @@ class AccesoMQTT:
                 self.flag = False
             else:
                 self.rele2 = False
-       # Mostramos el estado del SonOff. Si ponemos el SOCMinimo a 10 continuará cargando indefinidamente
+        # Nos quedamos con lo que queda pendiente hasta apagarse por si se enciende la placa de ACS y tenemos que parar la carga
+        if "PulseTime2" in self.mensaje:
+            self.quedan = self.mensaje["PulseTime2"]["Remaining"]
+                
+        # Mostramos el estado del SonOff
         logging.info(
-            "SOC Mínimo {}%, Relé1 = {}, Relé2 = {}, carga = {}, flag = {}, cargaRed = {}, batería {}%, consumo {}W, FV: {}W, {}".format(self.SOCMinimo, self.rele1, self.rele2, self.carga, self.flag, self.cargaRed, self.bateria, self.consumo, self.fv, self.mensaje)
+            "SOC Mínimo {}%, Relé1 = {}, Relé2 = {}, carga = {}, flag = {}, cargaRed = {}, batería {}%, consumo {}W, FV: {}W, PulseTime2: {}s, ACS: {}, ACSPulse: {}, {}".format(self.SOCMinimo, self.rele1, self.rele2, self.carga, self.flag, self.cargaRed, self.bateria, self.consumo, self.fv, self.quedan, self.placa, self.placaquedan, self.mensaje)
         )
 
     def mandaCorreo(self, mensaje, asunto = 'Información sobre carga del coche'):
@@ -308,6 +333,29 @@ class AccesoMQTT:
             self.enciende(False)
             # Procedemos a poner Var3 a 0 para que no se vuelva a activar
             self.client.publish("cmnd/CargaCoche/Var3", 0)
+        # Chequeamos si mientras estamos cargando de la red se ha encendido la placa y la batería está por debajo del mínimo absoluto
+        if self.rele2 and self.placa and self.bateria <= 10:
+            # Vemos cuanto nos falta de tiempo de carga y de la placa
+            self.pregunta("Pulse")
+            self.pregunta("PlacaPulse")
+            # Esperamos un par de segundos a tener la información
+            time.sleep(2)
+            # Apagamos carga
+            self.client.publish("cmnd/CargaCoche/POWER2", "0")
+            # Activamos flag
+            self.acs = True
+            # Y nos quedamos parados hasta que termine de calentar la placa, son 100 menos del tiempo, pero le damos 5 segunditos de margen
+            time.sleep(self.placaquedan - 95)
+        # Si hemos parado porque se había activado la placa y estaba tirando de la red y ya se ha apagado, volvemos a lanzar la carga
+        if self.acs and not self.placa:
+            # Programamos el PulseTime2 con el tiempo restante
+            self.client.publish("cmnd/CargaCoche/PulseTime2", self.quedan)
+            # Encendemos
+            self.enciende(False)
+            # Reiniciamos variables
+            self.acs = 0
+            self.quedan = 0
+            self.placaquedan = 0
         # Si no hemos activado el flag de carga o se ha desactivado por falta de consumo, lo avisamos una sola vez y salimos
         if not self.carga:
             if not self.flag:
