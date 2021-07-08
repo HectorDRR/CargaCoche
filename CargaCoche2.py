@@ -38,7 +38,7 @@
     
 """
 
-import time, os, datetime, sys, json, logging
+import time, datetime, sys, json, logging, pytz
 import config
 import paho.mqtt.client as mqtt
 
@@ -64,7 +64,7 @@ class AccesoMQTT:
         # Creo el cliente
         self.client = mqtt.Client("Coche")
         # Conecto al broker. Como cuando se reinicia hemos visto que es posible que el servicio se active 
-        # después del programa, ponemos varios reintentos para esperar por el servicio
+        # después del programa, ponemos varios reintentos para esperar por el servicio hasta 150 segundos
         # Definimos una variable para chequear desde el control principal del programa si la conexión ha ido bien
         self.noResponde = 0
         activo = -1
@@ -73,7 +73,7 @@ class AccesoMQTT:
                 activo = self.client.connect('localhost')
             except:
                 self.noResponde += 1
-                time.sleep(2)
+                time.sleep(30)
             if self.noResponde == 5:
                 return
             # Cuando la conexión se realiza sin problema devuelve un 0, así que salimos del bucle
@@ -304,7 +304,7 @@ class AccesoMQTT:
 		"""
         global tiempo
         # Nos quedamos con la hora para no saturar de mensajes en la misma hora
-        hora = datetime.datetime.now().hour
+        hora = datetime.datetime.now(pytz.timezone('Europe/London')).hour
         mensaje = ""
         # Si ya es por la noche mostramos el total de tiempo conectado durante el día y reiniciamos contador
         if hora == 20 and tiempo > 0:
@@ -315,7 +315,9 @@ class AccesoMQTT:
         # Si no está activo el relé de la red, es la hora de empezarla, y cargaRed es > 0 activamos la carga nocturna
         # Ampliamos el horario de comprobación de manera que no solo se active a la hora de InicioRed sino en todo el periodo
         # hasta FinalRed, de esta manera si nos ha faltado carga por la mañana podemos volver a activarla con el botón rojo.
-        if self.cargaRed and not self.rele2 and (hora >= config.InicioRed or hora <= config.FinalRed):
+        # Ponemos un and porque ahora la tarifa barata empieza a las 0 horas y el llano ya no es tan barato como antes
+        # También cambiamos en el SonOff la rule para que desconecte la carga a las 8 de la mañana, que si no, nos clavan
+        if self.cargaRed and not self.rele2 and hora >= config.InicioRed and hora <= config.FinalRed:
             """ Configuramos la carga nocturna dependiendo del valor de Var3
             1: Cargamos hasta que lo desactivemos manualmente
             >1: Horas que vamos a estar cargando usando PulseTime
@@ -372,7 +374,7 @@ class AccesoMQTT:
         if self.rele1 and self.consumo < config.PotenciaMinPR:
             # Por si está negociando el coche esperamos un poco
             self.pregunta("Consumo")
-            time.sleep(10)
+            time.sleep(15)
             if self.consumo > config.PotenciaMinPR:
                 return
             # Apagamos relé y quitamos carga
@@ -381,7 +383,7 @@ class AccesoMQTT:
             if self.parcial > 120:
                 coletilla = ' Tiempo conectado {}:{}'.format(self.parcial/60, self.parcial%60)
             logging.info('No hay consumo, por lo que el coche ya está cargado o no conectado. Desconectamos')
-            self.mandaCorreo('Batería al {}%.'.format(self.bateria, coletilla), 'Desconectamos por falta de consumo {}'.format(self.consumo))
+            self.mandaCorreo('Batería al {}%. {}'.format(self.bateria, coletilla), 'Desconectamos por falta de consumo {}'.format(self.consumo))
             # Activamos el flag para no seguir procesando
             self.flag = True
             return
@@ -418,7 +420,7 @@ class AccesoMQTT:
                 self.hora = hora
                 mensaje = "y mandamos correo"
             logging.info("Batería al {}%, desconectamos por exceso de consumo: {}, {}".format(self.bateria, self.consumo, mensaje))
-        # Si hemos desconectado por exceso de consumo no esperamos a estar por encima del SOC Mínimo + 15% y conectamos desde que el consumo baje
+        # Si hemos desconectado por exceso de consumo no esperamos a estar por encima del SOC Mínimo + margen y conectamos desde que el consumo baje
         if self.tePasaste and self.bateria > self.SOCMinimo and self.consumo + config.PotenciaPR - self.fv < config.PotenciaMax:
             self.enciende()
             logging.info("Volvemos a conectar puesto que ha bajado el consumo y la batería está al {}%".format(self.bateria))
@@ -460,4 +462,4 @@ if __name__ == "__main__":
     # Nos quedamos en bucle eterno controlando
     while True:
         victron.controla()
-        time.sleep(60)
+        time.sleep(30)
