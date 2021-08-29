@@ -374,9 +374,10 @@ class AccesoMQTT:
         # pero el consumo no lo refleja, desconectamos el relé y desactivamos la carga
         # No lo podemos hacer con el rele2 puesto que no podemos medir el consumo de la calle
         if self.rele1 and self.consumo < config.PotenciaMinPR:
-            # Por si está negociando el coche esperamos un poco
+            # Por si está negociando el coche esperamos un poco. Ampliamos el tiempo de espera por que el Zoe, 
+            # cuando cambiamos de FV a Red puede tardar más en activarse si tiene qu eponer el AA a funcionar
             self.pregunta("Consumo")
-            time.sleep(15)
+            time.sleep(45)
             if self.consumo > config.PotenciaMinPR:
                 return
             # Apagamos relé y quitamos carga
