@@ -77,8 +77,8 @@ class AccesoMQTT:
                 activo = self.client.connect('localhost')
             except:
                 self.noResponde += 1
-                time.sleep(30)
-            if self.noResponde == 5:
+                time.sleep(60)
+            if self.noResponde == 10:
                 return
             # Cuando la conexión se realiza sin problema devuelve un 0, así que salimos del bucle
             if activo == 0:
