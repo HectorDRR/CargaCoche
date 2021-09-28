@@ -451,7 +451,7 @@ if __name__ == "__main__":
         nivel = logging.INFO
         # Inicializamos el logging
         logging.basicConfig(
-        format=" %(message)s",
+        format="%(message)s",
         level=nivel,
     )
     
