@@ -25,8 +25,8 @@
     %%%
     Configuramos una regla en el SonOff para que cambie el comportamiento de los botones, haga encender el 
     led durante 5 segundos cuando activamos la carga con el botón verde que reinicie las variables, 
-    carga de fotovoltaica Mem1 a 1 a las 9. También ponemos el pulsetime2 a 0 y a las 13 apagamos el relé de la red:
-    rule1 on button1#state do backlog mem1 1;LedPower1 on;Delay 50;LedPower1 off endon on button2#state do add3 1 endon on time#Minute=540 do backlog mem1 1; pulsetime2 0 endon on time#Minute=780 do power2 off endon
+    carga de fotovoltaica Mem1 a 1 a las 8.
+    rule1 on system#boot do var3 0 endon on button1#state do backlog mem1 1;LedPower1 on;Delay 20;LedPower1 off endon on button2#state do add3 1 endon on time#Minute=480 do mem1 1 endon
     Y configuramos una segunda regla para hacer parpadear el Led tantas veces como horas hemos programado la carga nocturna con el botón rojo
     rule2 on var3#state>0 do var5 %var3% endon on var5#state>0 do backlog Ledpower1 on;delay 10;ledpower1 off;sub5 1 endon
     Para que no haya problemas con las actualizaciones de las imágenes, tenemos que instalar las librerías
@@ -125,6 +125,7 @@ class AccesoMQTT:
         self.fv = 0
         self.flag = False
         self.parcial = 0
+        self.avisado = False
         # Obtenemos valores
         for f in Preguntas:
             self.pregunta(f)
@@ -233,12 +234,14 @@ class AccesoMQTT:
         if "Var3" in self.mensaje:
             if self.mensaje["Var3"] == "0":
                 self.cargaRed = False
+                self.avisado = False
             else:
                 self.cargaRed = int(float(self.mensaje["Var3"]))
         # Asignamos la carga de red si la hacemos a través del botón rojo
         if "Add3" in self.mensaje:
             if self.mensaje["Add3"] == "0":
                 self.cargaRed = False
+                self.avisado = False
             else:
                 self.cargaRed = int(float(self.mensaje["Add3"]))
         if "POWER1" in self.mensaje:
@@ -319,24 +322,36 @@ class AccesoMQTT:
         # hasta FinalRed, de esta manera si nos ha faltado carga por la mañana podemos volver a activarla con el botón rojo.
         # Ponemos un and porque ahora la tarifa barata empieza a las 0 horas y el llano ya no es tan barato como antes
         # También cambiamos en el SonOff la rule para que desconecte la carga a las 8 de la mañana, que si no, nos clavan
-        if self.cargaRed and not self.rele2 and hora >= config.InicioRed and hora <= config.FinalRed:
+        # Añadimos la opción de poder disparar la carga de red en fin de semana en cualquier momento y no esperar a la noche
+        # Queda pendiente implementar también los festivos nacionales, que son valle todo el día también
+        if self.cargaRed and not self.rele2 and ((hora >= config.InicioRed and hora <= config.FinalRed) or dia > 5):
             """ Configuramos la carga nocturna dependiendo del valor de Var3
             1: Cargamos hasta que lo desactivemos manualmente
             >1: Horas que vamos a estar cargando usando PulseTime
             """
-            pulso = 0
+            # Si estamos en finde, no paramos la carga, en caso contrario, le restamos la hora actual a 8, por si lo ponemos 
+            # a la 1 de la mañana o más tarde y lo configuramos en el pulsetime
+            if dia > 5:
+                pulso = 0
+            else:
+                pulso = (8 - hora) * 3600 + 100
             # Si hemos programado unas horas en concreto:
             if self.cargaRed > 1:
                 # Asignamos el valor del pulso en segundos más los 100 primeros que son décimas de segundo
                 pulso = (self.cargaRed * 3600) + 100
+            # Si carga está a 1 y estamos en fin de semana, asumimos que queremos cargar todo lo posible así que activamos
+            # la carga continuada para que alterne entre red y FV si hay excedentes
+            elif dia > 5:
+                self.carga = 2
             # Configuramos el PulseTime
             self.client.publish("cmnd/CargaCoche/PulseTime2", pulso)
             logging.debug(logtime() + "Pulso: {}".format(pulso))
             # Encendemos el segundo relé
-            logging.info(logtime() + "Arrancamos la carga nocturna durante {} horas".format(self.cargaRed))
+            logging.info(logtime() + "Arrancamos la carga de red durante {} horas".format(self.cargaRed))
             self.enciende(False)
             # Procedemos a poner Var3 a 0 para que no se vuelva a activar
             self.client.publish("cmnd/CargaCoche/Var3", 0)
+            self.mandaCorreo('Se ha activado la carga de red durante {} horas'.format(self.cargaRed))
         # Chequeamos si mientras estamos cargando de la red se ha encendido la placa y la batería está por debajo del mínimo absoluto
         if self.rele2 and self.placa and self.bateria <= 10:
             # Vemos cuanto nos falta de tiempo de carga y de la placa
@@ -441,6 +456,11 @@ class AccesoMQTT:
             self.enciende(False)
             logging.info(logtime() + "Cargamos de red al haberse activado la carga continua y estar en fin de semana")
             self.mandaCorreo("Cargamos de red al haberse activado la carga continua y estar en fin de semana")
+        # Procedemos a informar de si se ha programado la carga de red por mail
+        if self.cargaRed and not self.avisado:
+            self.mandaCorreo('Se ha programado la carga de red durante {} horas'.format(self.cargaRed))
+            logging.info(logtime() + "Mandamos correo de programación de carga de red")
+            self.avisado = True
 
 if __name__ == "__main__":
     if len(sys.argv) == 2:
