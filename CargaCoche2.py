@@ -317,6 +317,9 @@ class AccesoMQTT:
                 'Ha estado activa la carga durante {} minutos y {} segundos'.format(tiempo/60, tiempo%60)
             )
             tiempo = 0
+        # Si es lunes a las 8 de la mañana y aún estamos cargando de la red, desconectamos para no cargar en periodo caro
+        if self.rele2 and hora == 8 and dia == 1:
+            self.client.publish("cmnd/CargaCoche/POWER2", "0")
         # Si no está activo el relé de la red, es la hora de empezarla, y cargaRed es > 0 activamos la carga nocturna
         # Ampliamos el horario de comprobación de manera que no solo se active a la hora de InicioRed sino en todo el periodo
         # hasta FinalRed, de esta manera si nos ha faltado carga por la mañana podemos volver a activarla con el botón rojo.
