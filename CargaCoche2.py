@@ -169,7 +169,7 @@ class AccesoMQTT:
             return
         self.mensaje = json.loads(message.payload.decode("utf-8"))
         self.consumo = self.mensaje["value"]
-        logging.debug(logtime() + f'Consumo: {round(self.consumo)}W, {self.mensaje}')
+        logging.debug(logtime() + f'Consumo: {self.consumo:.0f}W, {self.mensaje}')
 		# Cuando el coche está cargando, mostramos como va la batería
 
     def lee_EstadoDual(self, client, userdata, message):
@@ -199,7 +199,7 @@ class AccesoMQTT:
             return
         self.mensaje = json.loads(message.payload.decode("utf-8"))
         self.fv = self.mensaje["value"]
-        logging.debug(logtime() + f'FV: {round(self.fv)}W, {self.mensaje}')
+        logging.debug(logtime() + f'FV: {self.fv:.0f}W, {self.mensaje}')
 
     def lee_Placa(self, client, userdata, message):
         """ Se encarga de obtener el estado de la placa de ACS y el tiempo que le queda para apagarse
@@ -262,7 +262,7 @@ class AccesoMQTT:
                     self.parcial = (datetime.datetime.now() - conectado).seconds
                     if self.parcial > 120:
                         tiempo = tiempo + self.parcial
-                        logging.info(logtime() + f'Tiempo conectado {self.parcial/60} minutos y {self.parcial%60} segundos')
+                        logging.info(logtime() + f'Tiempo conectado {self.parcial/60:.0f} minutos y {self.parcial%60} segundos')
                 self.rele1 = False
 
         if "POWER2" in self.mensaje:
@@ -277,7 +277,7 @@ class AccesoMQTT:
                 
         # Mostramos el estado del SonOff
         logging.info(logtime() + 
-            f'SOC Mínimo {self.SOCMinimo}%, Relé1 = {self.rele1}, Relé2 = {self.rele2}, carga = {self.carga}, flag = {self.flag}, cargaRed = {self.cargaRed}, batería {self.bateria}%, consumo {self.consumo}W, FV: {self.fv}W, PulseTime2: {self.quedan}s, ACS: {self.placa}, ACSPulse: {self.placaquedan}, {self.mensaje}'
+            f'SOC Mínimo {self.SOCMinimo}%, Relé1 = {self.rele1}, Relé2 = {self.rele2}, carga = {self.carga}, flag = {self.flag}, cargaRed = {self.cargaRed}, batería {self.bateria}%, consumo {self.consumo:.0f}W, FV: {self.fv:.0f}W, PulseTime2: {self.quedan}s, ACS: {self.placa}, ACSPulse: {self.placaquedan}, {self.mensaje}'
         )
 
     def mandaCorreo(self, mensaje, asunto = 'Información sobre carga del coche'):
@@ -314,7 +314,7 @@ class AccesoMQTT:
         # Si ya es por la noche mostramos el total de tiempo conectado durante el día y reiniciamos contador
         if hora == 20 and tiempo > 0:
             logging.info(logtime() + 
-                f'Ha estado activa la carga durante {tiempo/60} minutos y {tiempo%60} segundos'
+                f'Ha estado activa la carga durante {tiempo/60:.0f} minutos y {tiempo%60} segundos'
             )
             tiempo = 0
         # Si es lunes a las 8 de la mañana y aún estamos cargando de la red, desconectamos para no cargar en periodo caro
@@ -402,9 +402,9 @@ class AccesoMQTT:
             self.client.publish("cmnd/CargaCoche/backlog", "Power1 0;Mem1 0")
             coletilla = ''
             if self.parcial > 120:
-                coletilla = ' Tiempo conectado {}:{}'.format(self.parcial/60, self.parcial%60)
+                coletilla = f' Tiempo conectado {self.parcial/60}:{self.parcial%60}'
             logging.info(logtime() + 'No hay consumo, por lo que el coche ya está cargado o no conectado. Desconectamos')
-            self.mandaCorreo(f'Batería al {self.bateria}%. {coletilla}', f'Desconectamos por falta de consumo {self.consumo}')
+            self.mandaCorreo(f'Batería al {self.bateria}%. {coletilla}', f'Desconectamos por falta de consumo {self.consumo:.0f}')
             # Activamos el flag para no seguir procesando
             self.flag = True
             return
@@ -417,7 +417,7 @@ class AccesoMQTT:
             time.sleep(1)
             coletilla = ''
             if self.parcial > 120:
-                coletilla = ' Tiempo conectado {self.parcial/60}:{self.parcial%60}'
+                coletilla = f' Tiempo conectado {self.parcial/60:.0f}:{self.parcial%60}'
             if not hora == self.hora:
                 self.mandaCorreo(f'La batería está al {self.bateria}%. {coletilla}', 'Desconectamos el coche')
                 self.hora = hora
@@ -431,13 +431,13 @@ class AccesoMQTT:
             # Activamos flag para poder reiniciar la carga desde que el consumo baje
             self.tePasaste = True
             if self.parcial > 120:
-                coletilla = f' Tiempo conectado {self.parcial/60}:{self.parcial%60}'
+                coletilla = f' Tiempo conectado {self.parcial/60:.0f}:{self.parcial%60}'
             # Enviamos un mail comunicando el apagado si no lo hemos enviado antes
             if not hora == self.hora:
-                self.mandaCorreo(f'El consumo es de {self.consumo}W y la FV está dando {self.fv}. {coletilla}', 'Desconectamos el coche por exceso de consumo')
+                self.mandaCorreo(f'El consumo es de {self.consumo:.0f}W y la FV está dando {self.fv:.0f}. {coletilla}', 'Desconectamos el coche por exceso de consumo')
                 self.hora = hora
                 mensaje = "y mandamos correo"
-            logging.info(logtime() + f'Batería al {self.bateria}%, desconectamos por exceso de consumo: {self.consumo}, {mensaje}')
+            logging.info(logtime() + f'Batería al {self.bateria}%, desconectamos por exceso de consumo: {self.consumo:.0f}, {mensaje}')
         # Si hemos desconectado por exceso de consumo no esperamos a estar por encima del SOC Mínimo + margen y conectamos desde que el consumo baje
         if self.tePasaste and self.bateria > self.SOCMinimo and self.consumo + config.PotenciaPR - self.fv < config.PotenciaMax:
             self.enciende()
@@ -452,7 +452,7 @@ class AccesoMQTT:
                 mensaje = "y mandamos correo"
             logging.info(logtime() + f'Batería al {self.bateria}%, conectamos {mensaje}')
         # Si estamos cargando de la FV, mostramos el consumo
-        logging.debug(logtime() + f'Consumo: {self.consumo}W')
+        logging.debug(logtime() + f'Consumo: {self.consumo:.0f}W')
         # Si no hemos desactivado la carga por falta de consumo, hemos activado la carga continuada (mem1 = 2), no está activado el relé de la calle 
 		# y estamos en sábado o domingo, pasamos a cargar de red cuando no estemos cargando de la FV
         if not self.flag and not self.rele1 and not self.rele2 and self.carga == 2 and dia > 5:
