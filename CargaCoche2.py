@@ -118,7 +118,7 @@ class AccesoMQTT:
         self.quedan = 0
         self.rele1 = 0
         self.rele2 = 0
-        self.SOCMinimo = 50
+        self.SOCMinimo = 69
         self.cargaRed = False
         self.consumo = 0
         self.tePasaste = False
@@ -199,7 +199,11 @@ class AccesoMQTT:
             return
         self.mensaje = json.loads(message.payload.decode("utf-8"))
         self.fv = self.mensaje["value"]
-        logging.debug(logtime() + f'FV: {self.fv:.0f}W, {self.mensaje}')
+        # Hemos tenido problemas de que el formato de lectura a veces no es correcto. Por ahora lo tratamos así hasta que lo podamos depurar mejor
+        if isinstance(self.fv, float):
+            logging.debug(logtime() + f'FV: {self.fv:.0f}W, {self.mensaje}')
+        else:
+            logging.debug(logtime() + f'Ha habido un problema al leer FV: {self.mensaje}')
 
     def lee_Placa(self, client, userdata, message):
         """ Se encarga de obtener el estado de la placa de ACS y el tiempo que le queda para apagarse
@@ -308,8 +312,6 @@ class AccesoMQTT:
 			en función de la hora y el % de SOC
 		"""
         global tiempo
-        # Nos quedamos con la hora para no saturar de mensajes en la misma hora. Lo pasamos al main
-        #hora = datetime.datetime.now(pytz.timezone('Europe/London')).hour
         mensaje = ""
         # Si ya es por la noche mostramos el total de tiempo conectado durante el día y reiniciamos contador
         if hora == 20 and tiempo > 0:
@@ -317,9 +319,11 @@ class AccesoMQTT:
                 f'Ha estado activa la carga durante {tiempo/60:.0f} minutos y {tiempo%60} segundos'
             )
             tiempo = 0
-        # Si es lunes a las 8 de la mañana y aún estamos cargando de la red, desconectamos para no cargar en periodo caro
-        if self.rele2 and hora == 8 and dia == 1:
+        # Si no es finde a las 8 de la mañana y aún estamos cargando de la red, desconectamos para no cargar en periodo caro
+        # Pendiente Tener en cuenta los festivos nacionales
+        if self.rele2 and hora == 8 and dia < 6:
             self.client.publish("cmnd/CargaCoche/POWER2", "0")
+            logging.info(logtime() + 'Paramos la carga por ser las 8 y día entre semana')
         # Si no está activo el relé de la red, es la hora de empezarla, y cargaRed es > 0 activamos la carga nocturna
         # Ampliamos el horario de comprobación de manera que no solo se active a la hora de InicioRed sino en todo el periodo
         # hasta FinalRed, de esta manera si nos ha faltado carga por la mañana podemos volver a activarla con el botón rojo.
@@ -332,12 +336,8 @@ class AccesoMQTT:
             1: Cargamos hasta que lo desactivemos manualmente
             >1: Horas que vamos a estar cargando usando PulseTime
             """
-            # Si estamos en finde, no paramos la carga, en caso contrario, le restamos la hora actual a 8, por si lo ponemos 
-            # a la 1 de la mañana o más tarde y lo configuramos en el pulsetime
-            if dia > 5:
-                pulso = 0
-            else:
-                pulso = (8 - hora) * 3600 + 100
+            pulso = 0
+            self.carga = 1
             # Si hemos programado unas horas en concreto:
             if self.cargaRed > 1:
                 # Asignamos el valor del pulso en segundos más los 100 primeros que son décimas de segundo
@@ -346,15 +346,14 @@ class AccesoMQTT:
             # la carga continuada para que alterne entre red y FV si hay excedentes
             elif dia > 5:
                 self.carga = 2
-            # Configuramos el PulseTime
             self.client.publish("cmnd/CargaCoche/PulseTime2", pulso)
             logging.debug(logtime() + "Pulso: {}".format(pulso))
             # Encendemos el segundo relé
-            logging.info(logtime() + f'Arrancamos la carga de red durante {self.cargaRed} horas')
+            logging.info(logtime() + f'Arrancamos la carga de red durante {self.cargaRed} horas y continua = {self.carga}')
             self.enciende(False)
             # Procedemos a poner Var3 a 0 para que no se vuelva a activar
             self.client.publish("cmnd/CargaCoche/Var3", 0)
-            self.mandaCorreo(f'Se ha activado la carga de red durante {self.cargaRed} horas')
+            self.mandaCorreo(f'Se ha activado la carga de red durante {self.cargaRed} horas y continua = {self.carga}')
         # Chequeamos si mientras estamos cargando de la red se ha encendido la placa y la batería está por debajo del mínimo absoluto
         if self.rele2 and self.placa and self.bateria <= 10:
             # Vemos cuanto nos falta de tiempo de carga y de la placa
@@ -472,12 +471,8 @@ if __name__ == "__main__":
     else:
         debug = False
         nivel = logging.INFO
-        # Inicializamos el logging
-        logging.basicConfig(
-        format="%(message)s",
-        level=nivel,
-    )
-    
+    # Inicializamos el logging
+    logging.basicConfig(format="%(message)s", level=nivel)
     logging.info(logtime() + "Arrancamos el Control de Carga")
     # Inicializamos el objeto para acceder al MQTT
     victron = AccesoMQTT(debug)
@@ -489,8 +484,8 @@ if __name__ == "__main__":
     conectado = 0
     # Nos quedamos en bucle eterno controlando
     while True:
+        # Nos quedamos con la hora y el día para no saturar de mensajes en la misma hora
         dia = datetime.datetime.now(pytz.timezone('Europe/London')).isoweekday()
         hora = datetime.datetime.now(pytz.timezone('Europe/London')).hour
-        # Actualizamos el logtime() aquí para no tener que llamarlo dentro de Controla, aunque eso creará que todo los logs en la misma iteración salgan con el mismo tiempo
         victron.controla()
         time.sleep(30)
