@@ -109,7 +109,7 @@ class AccesoMQTT:
         # Comenzamos el bucle
         self.client.loop_start()
         # Inicializamos la variable que servirá para que no me mande más de un mensaje a la hora
-        self.acs = 0
+        self.acs = False
         self.bateria = 0
         self.hora = 0
         self.carga = True
@@ -136,9 +136,9 @@ class AccesoMQTT:
         Por defecto, True, equivale al de la FV, que está conectado al relé 1
         """
         if que:
-            mensaje = "Power2 OFF;DELAY 10;Power1 ON"
+            mensaje = "Power2 OFF;Power1 ON"
         else:
-            mensaje = "Power1 OFF;DELAY 10;Power2 ON"
+            mensaje = "Power1 OFF;Power2 ON"
         # Mandamos la orden
         self.client.publish("cmnd/CargaCoche/backlog", mensaje)
 
@@ -164,7 +164,7 @@ class AccesoMQTT:
         if self.debug:
             print(message.payload)
         # A veces recibimos mensajes vacíos, así que en ese caso ignoramos,
-        # 	puesto que si no obtenemos un error en el json.loads()
+        # puesto que si no obtenemos un error en el json.loads()
         if len(message.payload.decode("utf-8")) == 0:
             return
         self.mensaje = json.loads(message.payload.decode("utf-8"))
@@ -194,7 +194,7 @@ class AccesoMQTT:
         if self.debug:
             print(message.payload)
         # A veces recibimos mensajes vacíos, así que en ese caso ignoramos,
-        # 	puesto que si no obtenemos un error en el json.loads()
+        # puesto que si no obtenemos un error en el json.loads()
         if len(message.payload.decode("utf-8")) == 0:
             return
         self.mensaje = json.loads(message.payload.decode("utf-8"))
@@ -208,6 +208,10 @@ class AccesoMQTT:
     def lee_Placa(self, client, userdata, message):
         """ Se encarga de obtener el estado de la placa de ACS y el tiempo que le queda para apagarse
         """
+        # Si no tenemos placa sencillamente lo dejamos en False
+        if not config.Placa:
+            self.placa = False
+            return
         # Lo importamos en formato json
         self.mensaje = json.loads(message.payload.decode("utf-8"))
         # Asignamos la carga
@@ -334,14 +338,16 @@ class AccesoMQTT:
         if self.cargaRed and not self.rele2 and ((hora >= config.InicioRed and hora <= config.FinalRed) or dia > 5):
             """ Configuramos la carga nocturna dependiendo del valor de Var3
             1: Cargamos hasta que lo desactivemos manualmente
-            >1: Horas que vamos a estar cargando usando PulseTime
+            >1: Horas que vamos a estar cargando usando PulseTime pero para poder cargar solo una hora le restamos 1,
+                es decir que si damos un toque es carga continua, pero si damos 2 cargaremos una hora, 3 = 2 horas...
             """
             pulso = 0
             self.carga = 1
             # Si hemos programado unas horas en concreto:
             if self.cargaRed > 1:
                 # Asignamos el valor del pulso en segundos más los 100 primeros que son décimas de segundo
-                pulso = (self.cargaRed * 3600) + 100
+                # Para poder cargar solo 1 hora le restamos 1, de manera que dando dos toques cargaremos una hora
+                pulso = ((self.cargaRed - 1) * 3600) + 100
             # Si carga está a 1 y estamos en fin de semana, asumimos que queremos cargar todo lo posible así que activamos
             # la carga continuada para que alterne entre red y FV si hay excedentes
             elif dia > 5:
@@ -349,11 +355,11 @@ class AccesoMQTT:
             self.client.publish("cmnd/CargaCoche/PulseTime2", pulso)
             logging.debug(logtime() + "Pulso: {}".format(pulso))
             # Encendemos el segundo relé
-            logging.info(logtime() + f'Arrancamos la carga de red durante {self.cargaRed} horas y continua = {self.carga}')
+            logging.info(logtime() + f'Arrancamos la carga de red durante {self.cargaRed - 1} horas y continua = {self.carga}')
             self.enciende(False)
             # Procedemos a poner Var3 a 0 para que no se vuelva a activar
             self.client.publish("cmnd/CargaCoche/Var3", 0)
-            self.mandaCorreo(f'Se ha activado la carga de red durante {self.cargaRed} horas y continua = {self.carga}')
+            self.mandaCorreo(f'Se ha activado la carga de red durante {self.cargaRed - 1} horas y continua = {self.carga}')
         # Chequeamos si mientras estamos cargando de la red se ha encendido la placa y la batería está por debajo del mínimo absoluto
         if self.rele2 and self.placa and self.bateria <= 10:
             # Vemos cuanto nos falta de tiempo de carga y de la placa
