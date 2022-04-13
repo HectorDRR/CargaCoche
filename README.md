@@ -21,6 +21,10 @@ Dependencias externas:
 
 Historia:
 
+2022-04-13, Ver. 1.4: Pasamos la documentación ala wiki del github por ser más sencilla su edición allí, por lo que quitamos
+    del repositorio el config.html. Hacemos pequeños ajustes para permitir la carga nocturna solamente 1 hora restando uno a
+    la cantidad de veces que apretamos el botón rojo(var3).
+    
 2022-03-19, Ver. 1.3: Empezamos a documentar todos los pasos necesarios para su implementación en otro sistema. Hasta ahora me 
     he limitado a ir haciendo configuraciones en mis equipos, pero ahora me ha surgido la posibilidad de que un compañero con
     un Kona y un sistema similar al mío también se lo quiera implementar, por lo que aprovechamos para revisar todos los pasos

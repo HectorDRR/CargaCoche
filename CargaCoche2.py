@@ -466,7 +466,7 @@ class AccesoMQTT:
             self.mandaCorreo("Cargamos de red al haberse activado la carga continua y estar en fin de semana")
         # Procedemos a informar de si se ha programado la carga de red por mail
         if self.cargaRed and not self.avisado:
-            self.mandaCorreo(f'Se ha programado la carga de red durante {self.cargaRed} horas')
+            self.mandaCorreo(f'Se ha programado la carga de red durante {self.cargaRed - 1} horas')
             logging.info(logtime() + "Mandamos correo de programación de carga de red")
             self.avisado = True
 
